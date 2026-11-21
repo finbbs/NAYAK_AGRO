@@ -161,7 +161,7 @@ if (CLOUD) {
   try { db = fs.initializeFirestore(app, { localCache: fs.persistentLocalCache({ tabManager: fs.persistentMultipleTabManager() }) }); }
   catch (e) { db = fs.getFirestore(app); }
 }
-const LKEY = 'nayak_agro_db', LOGIN_AT = 'nayak_login_at';
+const LKEY = 'nayak_agro_db', LOGIN_AT = 'nayak_force_ver';
 const syncErr = e => toast('Sync error: ' + e.message, 4000);
 const store = {
   newId(){ return CLOUD ? F.doc(F.collection(db,'biz',BIZ,'txns')).id : Date.now().toString(36) + Math.random().toString(36).slice(2,8); },
@@ -182,8 +182,10 @@ const store = {
       unsubs = COLS.map(c => F.onSnapshot(F.collection(db,'biz',BIZ,c), s => { DB[c] = s.docs.map(d => ({id:d.id, ...d.data()})); schedule(); }, syncErr));
       // Force logout: if admin pressed "Force logout all devices" after this device logged in → sign out
       unsubs.push(F.onSnapshot(F.doc(db,'biz',BIZ,'config','app'), s => {
-        const fl = (s.exists() && s.data().forceLogoutAt) || 0;
-        if (fl > num(localStorage.getItem(LOGIN_AT))) { localStorage.removeItem(LOGIN_AT); AU.signOut(auth); toast('Logged out by admin', 4000); }
+        if (s.metadata.fromCache) return;                      // only trust server value
+        const v = (s.exists() && s.data().forceVer) || 0, mine = localStorage.getItem(LOGIN_AT);
+        if (mine === null) localStorage.setItem(LOGIN_AT, v);    // fresh login → remember current version
+        else if (v > num(mine)) { localStorage.removeItem(LOGIN_AT); AU.signOut(auth); toast('Logged out by admin', 4000); }
       }, () => {}));
     }
     else { try { const d = JSON.parse(localStorage.getItem(LKEY) || '{}'); COLS.forEach(c => DB[c] = d[c] || []); } catch(e){} schedule(); }
@@ -489,13 +491,25 @@ function wireNewParty(sel, kind='Client / Farmer'){
   });
 }
 
+/* ---------- step 1: what kind of entry? ---------- */
+function entryChooser(){
+  const big = (onclick, bg, icon, title, sub) => `<button type="button" onclick="${onclick}" style="display:flex;gap:12px;align-items:center;width:100%;text-align:left;border:0;border-radius:14px;padding:16px;margin-bottom:10px;background:${bg};font:inherit;color:var(--tx)">
+    <span style="font-size:34px">${icon}</span><span><b style="font-size:16px">${title}</b><br><span style="font-size:13px;color:var(--mu)">${sub}</span></span></button>`;
+  openSheet('What do you want to add?',
+    big("A.newTx('income')", '#dcfce7', '🆕', 'New Entry', 'New work done (Income) or new cost like diesel, repair, salary (Expense)') +
+    big("A.newTx('receipt')", '#dbeafe', '⏳', 'Old Pending Payment', 'Money received from a party for old dues, or money paid for old dues') +
+    big("A.close();A.newBooking()", '#e0e7ff', '📅', 'Booking / Advance', 'Book a machine for a future date and take advance'));
+}
+
 /* ---------- transaction form ---------- */
 function txForm(id, preset = {}){
   const t = id ? {...DB.txns.find(x => x.id === id)} : {type:'income', date:today(), mode:'Cash', ...preset};
   if (!t.type) return;
-  const f = openSheet(id ? 'Edit Entry' : 'New Entry', `
+  const pend = t.type === 'receipt' || t.type === 'payment', GROUP = pend ? ['receipt','payment'] : ['income','expense'];
+  const f = openSheet((id ? 'Edit · ' : '') + (pend ? '⏳ Old Pending Payment' : '🆕 New Work / New Cost'), `
+    <div style="font-size:12px;color:var(--mu);margin:-4px 0 8px">${pend ? 'Settle an old balance. This does <b>not</b> change profit.' : 'New work done for a client, or a new cost for the business.'}</div>
     ${t.bookingId && !id ? `<div class="card" style="background:#e0e7ff;font-size:13px">📅 Bill for booking. Advance held <b>${inr(heldOf('bookingId', t.bookingId))}</b> will be adjusted automatically against this bill.</div>` : ''}
-    <div class="seg" id="tseg">${MAIN_TYPES.map(k => `<button type="button" data-v="${k}">${ICON[k]} ${TYPE_LBL[k]}</button>`).join('')}</div>
+    <div class="seg" id="tseg">${GROUP.map(k => `<button type="button" data-v="${k}">${ICON[k]} ${TYPE_LBL[k]}</button>`).join('')}</div>
     <input type="hidden" name="type" value="${t.type}"><input type="hidden" name="leaseId" value="${esc(t.leaseId||'')}"><input type="hidden" name="bookingId" value="${esc(t.bookingId||'')}">
     <div class="row"><label>Date<input type="date" name="date" value="${t.date}" required></label><label>Mode<select name="mode">${opts(MODES, t.mode)}</select></label></div>
     <label>Party / Client<select name="partyId">${partyOpts(t.partyId)}</select></label>
@@ -541,7 +555,12 @@ function txForm(id, preset = {}){
   };
   f.querySelectorAll('#tseg button').forEach(b => b.onclick = () => setType(b.dataset.v));
   ['qty','rate','amount','paid','partyId'].forEach(n => E[n].addEventListener('input', upd));
-  E.partyId.addEventListener('change', upd);
+  E.partyId.addEventListener('change', () => {   // pending mode: fill full due automatically
+    upd(); if (!pend || id || E.amount.value) return;
+    const b = partyBalances()[E.partyId.value] || 0, ty = E.type.value;
+    if (ty === 'receipt' && b > 0.5) E.amount.value = Math.round(b);
+    if (ty === 'payment' && b < -0.5) E.amount.value = Math.round(-b);
+  });
   wireNewParty(E.partyId);
   setType(t.type);
 }
@@ -846,14 +865,14 @@ $('#loginForm').addEventListener('submit', async e => {
   e.preventDefault();
   const u = e.target.u.value.trim().toLowerCase(), p = e.target.p.value; $('#loginErr').textContent = '';
   if (CLOUD) {
-    try { localStorage.setItem(LOGIN_AT, Date.now()); await AU.signInWithEmailAndPassword(auth, u.includes('@') ? u : `${u}@${LOGIN_DOMAIN}`, p); }
+    try { localStorage.removeItem(LOGIN_AT); await AU.signInWithEmailAndPassword(auth, u.includes('@') ? u : `${u}@${LOGIN_DOMAIN}`, p); }
     catch (x) { $('#loginErr').textContent = 'Wrong username or password'; }
   } else {
     const c = localCred();
     if (u === c.u && p === c.p) { localStorage.setItem(LSESS, u); showApp(); } else $('#loginErr').textContent = 'Wrong username or password';
   }
 });
-if (CLOUD) AU.onAuthStateChanged(auth, u => { if (u) { if (!localStorage.getItem(LOGIN_AT)) localStorage.setItem(LOGIN_AT, Date.now()); showApp(); } else { store.stop(); showLogin(); } });
+if (CLOUD) AU.onAuthStateChanged(auth, u => { if (u) showApp(); else { store.stop(); showLogin(); } });
 else localStorage.getItem(LSESS) ? showApp() : showLogin();
 
 /* ---------- online status & PWA ---------- */
@@ -870,7 +889,7 @@ window.A = {
   bookMachine(id){ S.bf = {type:'', machine:id, party:'', q:''}; A.go('book'); },
   pq(v){ S.pq = v; render(); },
   dueOnly(force){ S.dueOnly = force === true ? true : !S.dueOnly; render(); },
-  fab(){ ({home:()=>txForm(), book:()=>txForm(), parties:()=>partyForm(), loans:()=>loanForm(), machines:()=>machineForm(), leases:()=>leaseForm(), bookings:()=>bookingForm()}[S.tab] || (()=>{}))(); },
+  fab(){ ({home:entryChooser, book:entryChooser, parties:()=>partyForm(), loans:()=>loanForm(), machines:()=>machineForm(), leases:()=>leaseForm(), bookings:()=>bookingForm()}[S.tab] || (()=>{}))(); },
   newTx(type, preset={}){ txForm(null, {type, ...preset}); },
   editTx(id){ const t = DB.txns.find(x => x.id === id); if (t) HOLD.includes(t.type) ? holdTxForm(id) : txForm(id); },
   newBooking: (preset={}) => bookingForm(null, preset),
@@ -900,7 +919,7 @@ window.A = {
   logout(){ if (!confirm('Logout from this phone?')) return; localStorage.removeItem(LOGIN_AT); if (CLOUD) AU.signOut(auth); else { localStorage.removeItem(LSESS); showLogin(); } },
   forceLogout(){
     if (!confirm('Logout ALL phones using this app?')) return;
-    F.setDoc(F.doc(db,'biz',BIZ,'config','app'), {forceLogoutAt: Date.now() + 1000, by: auth.currentUser?.email || ''}, {merge:true})
+    F.setDoc(F.doc(db,'biz',BIZ,'config','app'), {forceVer: F.increment(1), at: Date.now(), by: auth.currentUser?.email || ''}, {merge:true})
       .then(() => toast('All devices will be logged out')).catch(syncErr);
   }
 };
