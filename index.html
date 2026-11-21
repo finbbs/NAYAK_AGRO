@@ -289,10 +289,17 @@ function txRow(t){
   const a = num(t.amount), due = (t.type==='income'||t.type==='expense') ? a - num(t.paid === '' ? a : t.paid) : 0;
   const plus = ['income','receipt','advance','forfeit'].includes(t.type), neutral = t.type === 'adjust';
   const title = HOLD.includes(t.type) ? `${holdLbl(t)} — ${pName(t.partyId)||'?'}` : (t.type==='receipt'||t.type==='payment') ? `${TYPE_LBL[t.type]} — ${pName(t.partyId)||'?'}` : (t.category || TYPE_LBL[t.type]);
-  const meta = [fd(t.date), mName(t.machineId), t.type==='income'||t.type==='expense' ? pName(t.partyId) : '', t.qty ? `${t.qty} × ${inr(t.rate)}` : '', t.mode].filter(Boolean).join(' · ');
+  const meta = [fd(t.date), mName(t.machineId), t.type==='income'||t.type==='expense' ? pName(t.partyId) : '', qtyText(t), t.mode].filter(Boolean).join(' · ');
   return `<div class="item" onclick="A.editTx('${t.id}')"><div class="av" style="background:${TBG[t.type]}">${ICON[t.type]}</div>
     <div class="mid"><div class="t">${esc(title)}</div><div class="s">${esc(meta)}${t.note?`<br>${esc(t.note)}`:''}</div></div>
     <div class="amt ${neutral?'':plus?'inc':'exp'}">${neutral?'':plus?'+':'−'}${inr(a)}${due>0.5?`<small class="pen">${t.type==='income'?'Due':'To pay'} ${inr(due)}</small>`:''}</div></div>`;
+}
+/* "2h 30m × ₹2,400/hr" when time was entered, else "5 × ₹2,500" */
+const hm = mins => `${Math.floor(mins/60)}h ${Math.round(mins%60)}m`;
+function qtyText(t){
+  if (num(t.mins) > 0) return `${hm(num(t.mins))} × ${inr(t.rate)}/${t.unit === 'min' ? 'min' : 'hr'}`;
+  if (t.qty) return `${t.qty}${t.category === 'Diesel' ? ' L' : ''} × ${inr(t.rate)}`;
+  return '';
 }
 const stat = (label, val, cls='') => `<div class="stat"><span>${label}</span><b class="${cls}">${val}</b></div>`;
 const STATUS_TAG = {Booked:'b', Done:'', Cancelled:'r'};
@@ -520,7 +527,7 @@ function txForm(id, preset = {}){
     <div id="partyDue" style="font-size:12px;margin:-4px 0 8px"></div>
     <div class="ie"><label>Machine<select name="machineId">${machineOpts(t.machineId)}</select></label>
       <label>Category<select name="category"></select></label>
-      <div class="row" style="align-items:flex-end"><label>⏱ Time: Hours<input name="th" inputmode="numeric" placeholder="hr"></label><label>Minutes<input name="tm" inputmode="numeric" placeholder="min"></label></div>
+      <div class="row" style="align-items:flex-end"><label>⏱ Time: Hours<input name="th" inputmode="numeric" placeholder="hr" value="${num(t.mins) ? Math.floor(num(t.mins)/60) : ''}"></label><label>Minutes<input name="tm" inputmode="numeric" placeholder="min" value="${num(t.mins) ? Math.round(num(t.mins)%60) : ''}"></label></div>
       <div class="row"><label>Qty (hr / acre / trip)<input name="qty" inputmode="decimal" value="${esc(t.qty||'')}"></label><label>Rate ₹<input name="rate" inputmode="decimal" value="${esc(t.rate||'')}"></label></div>
       <div id="timeInfo" style="font-size:12px;color:var(--mu);margin:-4px 0 8px">Per-hour work: fill Hours + Minutes, Qty fills itself</div></div>
     <label>Total Amount ₹<input name="amount" inputmode="decimal" required value="${esc(t.amount ?? '')}" style="font-size:18px;font-weight:700"></label>
@@ -537,7 +544,8 @@ function txForm(id, preset = {}){
       if (!ie && !d.partyId) return toast('Select party'), false;
       if (ie && paid < amount && !d.partyId) return toast('Select party to track pending amount'), false;
       const rec = { type:d.type, date:d.date, mode:d.mode, partyId:d.partyId, leaseId:d.leaseId||'', bookingId:d.bookingId||'', note:d.note.trim(), amount, paid,
-        machineId: ie ? d.machineId : '', category: ie ? d.category : TYPE_LBL[d.type], qty: ie ? d.qty : '', rate: ie ? d.rate : '' };
+        machineId: ie ? d.machineId : '', category: ie ? d.category : TYPE_LBL[d.type], qty: ie ? d.qty : '', rate: ie ? d.rate : '',
+        mins: ie && (num(d.th) || num(d.tm)) ? Math.round(num(d.th) * 60 + num(d.tm)) : '', unit: ie && (num(d.th) || num(d.tm)) ? (t.unit || 'hr') : '' };
       if (id) store.set('txns', id, rec);
       else { const nid = store.add('txns', rec); if (d.bookingId) finishBooking(d.bookingId, {doneTxnId: nid}, d.date); }
     }, onDelete: id ? () => store.del('txns', id) : null });
@@ -562,8 +570,11 @@ function txForm(id, preset = {}){
   f.querySelectorAll('#tseg button').forEach(b => b.onclick = () => setType(b.dataset.v));
   ['qty','rate','amount','paid','partyId'].forEach(n => E[n].addEventListener('input', upd));
   const tUpd = () => { const mins = num(E.th.value) * 60 + num(E.tm.value); if (!mins) return;
-    E.qty.value = +(mins / 60).toFixed(2); $('#timeInfo').textContent = `${Math.floor(mins/60)} h ${Math.round(mins%60)} m = ${E.qty.value} hours`; upd(); };
+    const pm = t.unit === 'min'; E.qty.value = pm ? Math.round(mins) : +(mins / 60).toFixed(2);
+    $('#timeInfo').textContent = `${hm(mins)} = ${E.qty.value} ${pm ? 'min' : 'hours'}`; upd(); };
   E.th.addEventListener('input', tUpd); E.tm.addEventListener('input', tUpd);
+  E.qty.addEventListener('input', () => { if (E.th.value || E.tm.value) { E.th.value = ''; E.tm.value = ''; $('#timeInfo').textContent = 'Time cleared (qty typed manually)'; } });
+  if (num(t.mins)) $('#timeInfo').textContent = `${hm(num(t.mins))} = ${t.qty} ${t.unit === 'min' ? 'min' : 'hours'}`;
   E.partyId.addEventListener('change', () => {   // pending mode: fill full due automatically
     upd(); if (!pend || id || E.amount.value) return;
     const b = partyBalances()[E.partyId.value] || 0, ty = E.type.value;
@@ -600,7 +611,7 @@ function partyView(id){
     let dr = 0, cr = 0;
     if (t.type==='income') { dr = a; cr = pd; } else if (t.type==='expense') { dr = pd; cr = a; } else if (t.type==='receipt' || t.type==='adjust') cr = a; else dr = a;
     run += dr - cr;
-    return `<tr onclick="A.editTx('${t.id}')"><td>${fd(t.date)}</td><td>${esc(t.category||TYPE_LBL[t.type])}${t.qty?`<br><small>${esc(t.qty)} × ${inr(t.rate)}</small>`:''}${t.note?`<br><small>${esc(t.note)}</small>`:''}</td><td class="n">${dr?inr(dr):''}</td><td class="n">${cr?inr(cr):''}</td><td class="n"><b>${inr(run)}</b></td></tr>`;
+    return `<tr onclick="A.editTx('${t.id}')"><td>${fd(t.date)}</td><td>${esc(t.category||TYPE_LBL[t.type])}${qtyText(t)?`<br><small>${esc(qtyText(t))}</small>`:''}${t.note?`<br><small>${esc(t.note)}</small>`:''}</td><td class="n">${dr?inr(dr):''}</td><td class="n">${cr?inr(cr):''}</td><td class="n"><b>${inr(run)}</b></td></tr>`;
   }).reverse().join('');
   const b = run, ph = (p.phone||'').replace(/\D/g,'').slice(-10);
   const msg = encodeURIComponent(`Namaskar ${p.name} ji,\nNAYAK Agro (Harvester/Tractor) account me aapka ₹${Math.round(b).toLocaleString('en-IN')} baki hai. Kripya jaldi bhugtan karein.\nDhanyavad 🙏\n- NAYAK Agro`);
@@ -825,7 +836,7 @@ function leaseStatement(lid){
     else if (t.type === 'adjust') { adj += a; lbl = 'Deposit adjusted'; v = '−' + inr(a); cls = 'exp'; }
     else if (t.type === 'receipt') { recd += a; lbl = '💰 Received'; v = '−' + inr(a); cls = 'blu'; }
     else { recd -= a; lbl = 'Paid to lessee'; v = '+' + inr(a); cls = 'pen'; }
-    return `<tr onclick="A.editTx('${t.id}')"><td>${fd(t.date)}</td><td>${esc(lbl)}${t.qty ? `<br><small>${esc(t.qty)} L × ${inr(t.rate)}</small>` : ''}</td><td class="n ${cls}">${v}</td></tr>`; }).join('');
+    return `<tr onclick="A.editTx('${t.id}')"><td>${fd(t.date)}</td><td>${esc(lbl)}${qtyText(t) ? `<br><small>${esc(qtyText(t))}</small>` : ''}</td><td class="n ${cls}">${v}</td></tr>`; }).join('');
   const bal = rent - cost - adj - recd;
   const msg = encodeURIComponent(`NAYAK Agro – Lease Statement\n${mName(l.machineId)} → ${p.name||''}\nFrom ${fd(l.start)}\n\nRent: ₹${Math.round(rent).toLocaleString('en-IN')}\nLess fuel/cost by you: ₹${Math.round(cost).toLocaleString('en-IN')}${adj ? `\nLess deposit adjusted: ₹${Math.round(adj).toLocaleString('en-IN')}` : ''}\nLess received: ₹${Math.round(recd).toLocaleString('en-IN')}\n\n${bal >= 0 ? 'Balance to pay' : 'We owe you'}: ₹${Math.round(Math.abs(bal)).toLocaleString('en-IN')}\nDhanyavad 🙏`);
   const ph = (p.phone||'').replace(/\D/g,'').slice(-10);
@@ -864,7 +875,7 @@ function leaseTimeBill(lid){
       if (paid > amount) return toast('Received cannot be more than total'), false;
       const meter = d.ms && d.me ? ` · meter ${d.ms}→${d.me}` : '';
       store.add('txns', {type:'income', category:'Lease Rent', machineId:l.machineId, partyId:l.partyId, leaseId:lid, date:d.date, mode:d.mode,
-        qty: perMin ? mins : +(mins/60).toFixed(2), rate: num(d.rate), amount, paid,
+        qty: perMin ? mins : +(mins/60).toFixed(2), rate: num(d.rate), amount, paid, mins, unit: perMin ? 'min' : 'hr',
         note: [`${Math.floor(mins/60)}h ${mins%60}m${meter}${d.to ? ' · till ' + fd(d.to) : ''}`, d.note.trim()].filter(Boolean).join(' · ')});
     } });
   const E = f.elements;
@@ -933,9 +944,9 @@ function loanPayForm(loanId, pid){
 /* ---------- export / backup ---------- */
 function exportCSV(){
   const L = DB.txns.filter(t => inRange(t.date, S.period)).sort(byDateAsc);
-  const H = ['Date','Type','Category','Machine','Party','Qty','Rate','Amount','Paid/Received','Pending','Mode','Note'];
+  const H = ['Date','Type','Category','Machine','Party','Time (h:m)','Qty','Rate','Amount','Paid/Received','Pending','Mode','Note'];
   const q = v => `"${String(v ?? '').replace(/"/g,'""')}"`;
-  const rows = L.map(t => { const ie = t.type==='income'||t.type==='expense'; return [fd(t.date), TYPE_LBL[t.type], t.category, mName(t.machineId), pName(t.partyId), t.qty, t.rate, num(t.amount), num(t.paid), ie ? num(t.amount)-num(t.paid) : 0, t.mode, t.note].map(q).join(','); });
+  const rows = L.map(t => { const ie = t.type==='income'||t.type==='expense'; return [fd(t.date), TYPE_LBL[t.type], t.category, mName(t.machineId), pName(t.partyId), num(t.mins) ? hm(num(t.mins)) : '', t.qty, t.rate, num(t.amount), num(t.paid), ie ? num(t.amount)-num(t.paid) : 0, t.mode, t.note].map(q).join(','); });
   download(`NAYAK-entries-${S.period}.csv`, '﻿' + [H.join(','), ...rows].join('\n'), 'text/csv');
 }
 function backup(){ download(`NAYAK-backup-${today()}.json`, JSON.stringify({app:'NAYAK Agro Ledger', at:new Date().toISOString(), data:DB}, null, 1), 'application/json'); }
