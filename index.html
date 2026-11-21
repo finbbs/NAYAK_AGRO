@@ -64,6 +64,14 @@ table{width:100%;border-collapse:collapse;font-size:13px}td,th{padding:7px 4px;b
 .hidden{display:none!important}
 .printhead{display:none}
 @media print{header,nav,.fab,.noprint{display:none!important}main{padding:0}.printhead{display:block}.card{box-shadow:none;border:1px solid #ddd}}
+#printArea{display:none}
+.pl{font-family:Arial,sans-serif;color:#111;font-size:12px;padding:10px}.ph{display:flex;justify-content:space-between;border-bottom:3px solid #14532d;padding-bottom:6px;margin-bottom:8px}
+.pt{font-size:24px;font-weight:900;color:#14532d;letter-spacing:2px}.pl h3{color:#14532d;margin:12px 0 4px;font-size:14px}
+.pl table{width:100%;border-collapse:collapse}.pl td,.pl th{border:1px solid #bbb;padding:5px 6px;font-size:11.5px}.pl th{background:#14532d;color:#fff}
+.pi td{border:0;vertical-align:top;width:50%}.ps td:last-child{text-align:right;white-space:nowrap;width:30%}.ps tr.b td{font-weight:700;background:#f1f5f9}
+.ps tr.f td{font-weight:800;font-size:14px;background:#fef3c7}.pd td:nth-child(n+3),.pd th:nth-child(n+3){text-align:right;white-space:nowrap}.pd tr.b td{font-weight:700;background:#f1f5f9}
+.sg{display:flex;justify-content:space-between;margin-top:50px}.sg div{border-top:1px solid #111;padding-top:4px;width:40%;text-align:center}
+@media print{body.printing #app,body.printing #login,body.printing .sheet-bg,body.printing .toast{display:none!important}body.printing #printArea{display:block}body.printing{background:#fff}@page{margin:10mm}}
 </style>
 </head>
 <body>
@@ -301,7 +309,7 @@ function qtyText(t){
   if (t.qty) return `${t.qty}${t.category === 'Diesel' ? ' L' : ''} × ${inr(t.rate)}`;
   return '';
 }
-const stat = (label, val, cls='') => `<div class="stat"><span>${label}</span><b class="${cls}">${val}</b></div>`;
+const stat = (label, val, cls='', click='') => `<div class="stat" ${click ? `onclick="${click}" style="cursor:pointer"` : ''}><span>${label}${click ? ' <span style="float:right;color:var(--g)">›</span>' : ''}</span><b class="${cls}">${val}</b></div>`;
 const STATUS_TAG = {Booked:'b', Done:'', Cancelled:'r'};
 function bookRow(b){
   const held = heldOf('bookingId', b.id), clash = b.status === 'Booked' && bookingConflicts(b, b.id).length;
@@ -323,17 +331,17 @@ const VIEWS = {
     return `<div class="filters">${periodSel()}</div>
     ${!DB.machines.length ? `<div class="card" style="background:#fef3c7"><b>Welcome to NAYAK Agro Ledger 🙏</b><p style="margin:6px 0 10px;font-size:13px">Start by adding your Harvester and Tractor, then record daily income &amp; expenses.</p><button class="btn s" onclick="A.go('machines');A.fab()">+ Add Machine</button></div>` : ''}
     <div class="grid">
-      ${stat('Income (Work Billed)', inr(r.inc), 'inc')}
-      ${stat('Expenses + Interest', inr(r.exp + r.int), 'exp')}
-      ${stat('Net Profit', inr(r.profit), r.profit >= 0 ? 'inc' : 'exp')}
-      ${stat('Net Cash Flow', inr(r.cash), r.cash >= 0 ? 'blu' : 'exp')}
-      ${stat('To Receive (all time)', inr(rec), 'pen')}
-      ${stat('To Pay (all time)', inr(pay), 'exp')}
-      ${stat('Loan Outstanding', inr(loanOut), 'exp')}
-      ${stat('Advance Held (Bookings)', inr(H.adv), 'blu')}
-      ${stat('Deposit Held (Leases)', inr(H.dep), 'blu')}
-      ${stat('Open Bookings', upcoming.length, 'blu')}
-      ${stat('Active Leases', activeLease, 'blu')}
+      ${stat('Income (Work Billed)', inr(r.inc), 'inc', 'A.hd(\'income\')')}
+      ${stat('Expenses + Interest', inr(r.exp + r.int), 'exp', 'A.hd(\'expense\')')}
+      ${stat('Net Profit', inr(r.profit), r.profit >= 0 ? 'inc' : 'exp', 'A.hd(\'profit\')')}
+      ${stat('Net Cash Flow', inr(r.cash), r.cash >= 0 ? 'blu' : 'exp', 'A.hd(\'cash\')')}
+      ${stat('To Receive (all time)', inr(rec), 'pen', 'A.hd(\'receive\')')}
+      ${stat('To Pay (all time)', inr(pay), 'exp', 'A.hd(\'pay\')')}
+      ${stat('Loan Outstanding', inr(loanOut), 'exp', 'A.hd(\'loans\')')}
+      ${stat('Advance Held (Bookings)', inr(H.adv), 'blu', 'A.hd(\'advance\')')}
+      ${stat('Deposit Held (Leases)', inr(H.dep), 'blu', 'A.hd(\'deposit\')')}
+      ${stat('Open Bookings', upcoming.length, 'blu', 'A.hd(\'bookings\')')}
+      ${stat('Active Leases', activeLease, 'blu', 'A.hd(\'leases\')')}
     </div>
     <div class="btns" style="margin:12px 0">
       <button class="btn" onclick="A.newTx('income')">🌾 + Income</button>
@@ -418,7 +426,7 @@ const VIEWS = {
         ${pb < -0.5 ? `<div class="exp" style="font-size:13px;margin-bottom:8px">Lessee spent more than rent — you owe them ${inr(-pb)}</div>` : ''}
         ${l.note?`<div style="font-size:13px;color:var(--mu);margin-bottom:8px">${esc(l.note)}</div>`:''}
         <div class="btns"><button class="btn s" onclick="A.leaseBill('${l.id}')">+ Rent Bill</button><button class="btn s r" onclick="A.leaseFuel('${l.id}')">⛽ Fuel by Lessee</button><button class="btn s b" onclick="A.newTx('receipt',{partyId:'${l.partyId}'})">💰 Receive</button></div>
-        <div class="btns" style="margin-top:8px"><button class="btn s o" onclick="A.leaseStmt('${l.id}')">📋 Statement</button><button class="btn s o" onclick="A.holdNew('leaseId','${l.id}')">📥 + Deposit</button>${dh>0.5?`<button class="btn s o" onclick="A.settle('leaseId','${l.id}')">↩️ Deposit</button>`:''}<button class="btn s o" onclick="A.lease('${l.id}')">✏️ Edit</button></div></div>`; };
+        <div class="btns" style="margin-top:8px"><button class="btn s o" onclick="A.leaseStmt('${l.id}')">📋 Ledger / PDF</button><button class="btn s o" onclick="A.holdNew('leaseId','${l.id}')">📥 + Deposit</button>${dh>0.5?`<button class="btn s o" onclick="A.settle('leaseId','${l.id}')">↩️ Deposit</button>`:''}<button class="btn s o" onclick="A.lease('${l.id}')">✏️ Edit</button></div></div>`; };
     const act = DB.leases.filter(l => l.status!=='Closed'), cl = DB.leases.filter(l => l.status==='Closed');
     return `<h2 style="margin-top:0">📄 Machines on Lease / Rent</h2>` + (DB.leases.length ? act.map(row).join('') + (cl.length ? '<h2>Closed</h2>' + cl.map(row).join('') : '') : '<div class="card empty">No lease records. Tap + when you give a machine on rent.</div>');
   },
@@ -512,6 +520,55 @@ function entryChooser(){
     big("A.close();A.newBooking()", '#e0e7ff', '📅', 'Booking / Advance', 'Book a machine for a future date and take advance'));
 }
 
+/* ---------- Home card → full record list ---------- */
+function homeDetail(kind){
+  const P = S.period, PL = periodLabel(P), r = summ(P), bal = partyBalances();
+  const inP = t => inRange(t.date, P), list = L => L.length ? [...L].sort(byDateDesc).map(txRow).join('') : '<div class="empty">No records</div>';
+  const catTbl = o => { const e = Object.entries(o).sort((a,b) => b[1]-a[1]); return e.length ? `<table>${e.map(([k,v]) => `<tr><td>${esc(k)}</td><td class="n">${inr(v)}</td></tr>`).join('')}</table>` : ''; };
+  const bookBtn = type => `<button type="button" class="btn s o" style="width:100%;margin:8px 0" onclick="A.close();A.bookType('${type}')">📒 Open in Day Book (filter / search)</button>`;
+  const partyList = arr => arr.length ? arr.map(x => `<div class="item" onclick="A.party('${x.p.id}')"><div class="av">👤</div><div class="mid"><div class="t">${esc(x.p.name)}</div><div class="s">${esc([x.p.kind,x.p.village,x.p.phone].filter(Boolean).join(' · '))}</div></div><div class="amt ${x.b>0?'pen':'exp'}">${inr(Math.abs(x.b))}</div></div>`).join('') : '<div class="empty">Nothing pending 🎉</div>';
+  let title, body;
+  if (kind === 'income') {
+    const L = DB.txns.filter(t => inP(t) && (t.type === 'income' || t.type === 'forfeit'));
+    title = `🌾 Income · ${PL}`; body = `<div class="card"><div class="big inc">${inr(r.inc)}</div>${catTbl(r.catI)}</div>${bookBtn('income')}<div class="card">${list(L)}</div>`;
+  } else if (kind === 'expense') {
+    const L = DB.txns.filter(t => inP(t) && t.type === 'expense');
+    const lp = DB.loanPays.filter(p => inRange(p.date, P) && num(p.interest) > 0).sort(byDateDesc);
+    title = `⛽ Expenses · ${PL}`; body = `<div class="card"><div class="big exp">${inr(r.exp + r.int)}</div>${catTbl(r.catE)}</div>${bookBtn('expense')}<div class="card">${list(L)}</div>
+      ${lp.length ? `<h2>🏦 Loan interest paid</h2><div class="card">${lp.map(p => { const l = DB.loans.find(x => x.id === p.loanId) || {}; return `<div class="item" onclick="A.loan('${p.loanId}')"><div class="av" style="background:#fee2e2">🏦</div><div class="mid"><div class="t">Interest — ${esc(l.lender||'')}</div><div class="s">${fd(p.date)} · EMI ${inr(p.amount)}</div></div><div class="amt exp">−${inr(p.interest)}</div></div>`; }).join('')}</div>` : ''}`;
+  } else if (kind === 'profit') {
+    const rows = Object.entries(r.byM).map(([id,v]) => `<tr><td>${esc(id==='_'?'General':mName(id)||'(deleted)')}</td><td class="n inc">${inr(v.i)}</td><td class="n exp">${inr(v.e)}</td><td class="n"><b>${inr(v.i-v.e)}</b></td></tr>`).join('');
+    title = `📈 Profit · ${PL}`; body = `<div class="card"><table><tr><td>Income</td><td class="n inc">${inr(r.inc)}</td></tr><tr><td>Expenses</td><td class="n exp">− ${inr(r.exp)}</td></tr><tr><td>Loan interest</td><td class="n exp">− ${inr(r.int)}</td></tr><tr><th>Net Profit</th><th class="n big ${r.profit>=0?'inc':'exp'}" style="font-size:20px">${inr(r.profit)}</th></tr></table></div>
+      <h2>Machine-wise</h2><div class="card"><table><tr><th>Machine</th><th class="n">Income</th><th class="n">Expense</th><th class="n">Profit</th></tr>${rows || '<tr><td colspan="4" class="empty">No data</td></tr>'}</table></div>
+      <div class="btns"><button type="button" class="btn s" onclick="A.hd('income')">See income</button><button type="button" class="btn s r" onclick="A.hd('expense')">See expenses</button></div>`;
+  } else if (kind === 'cash') {
+    const items = [];
+    DB.txns.filter(inP).forEach(t => { const a = num(t.amount), pd = num(t.paid);
+      if (t.type === 'income' && pd) items.push({d:t.date, c:t.createdAt, t:`${t.category} — ${pName(t.partyId)||''}`, v:pd, id:t.id});
+      if (t.type === 'expense' && pd) items.push({d:t.date, c:t.createdAt, t:`${t.category} — ${pName(t.partyId)||mName(t.machineId)||''}`, v:-pd, id:t.id});
+      if (['receipt','advance'].includes(t.type)) items.push({d:t.date, c:t.createdAt, t:`${HOLD.includes(t.type)?holdLbl(t):TYPE_LBL[t.type]} — ${pName(t.partyId)}`, v:a, id:t.id});
+      if (['payment','refund'].includes(t.type)) items.push({d:t.date, c:t.createdAt, t:`${HOLD.includes(t.type)?holdLbl(t):TYPE_LBL[t.type]} — ${pName(t.partyId)}`, v:-a, id:t.id}); });
+    DB.loans.filter(l => inRange(l.date, P)).forEach(l => items.push({d:l.date, t:`Loan taken — ${l.lender}`, v:num(l.principal), loan:l.id}));
+    DB.loanPays.filter(p => inRange(p.date, P)).forEach(p => items.push({d:p.date, t:`EMI paid — ${(DB.loans.find(x => x.id === p.loanId)||{}).lender||''}`, v:-num(p.amount), loan:p.loanId}));
+    items.sort((a,b) => (b.d||'').localeCompare(a.d||'') || (b.c||0)-(a.c||0));
+    const cin = sum(items.filter(x => x.v > 0), x => x.v), cout = -sum(items.filter(x => x.v < 0), x => x.v);
+    title = `💵 Cash Flow · ${PL}`; body = `<div class="grid" style="margin-bottom:8px">${stat('Cash In', inr(cin), 'inc')}${stat('Cash Out', inr(cout), 'exp')}</div><div class="card"><div class="big ${r.cash>=0?'blu':'exp'}">${inr(r.cash)}</div><div style="font-size:12px;color:var(--mu)">Net cash flow (actual money in − out)</div></div>
+      <div class="card">${items.length ? items.map(x => `<div class="item" onclick="${x.id ? `A.editTx('${x.id}')` : `A.loan('${x.loan}')`}"><div class="av" style="background:${x.v>0?'#dcfce7':'#fee2e2'}">${x.v>0?'⬇️':'⬆️'}</div><div class="mid"><div class="t">${esc(x.t)}</div><div class="s">${fd(x.d)}</div></div><div class="amt ${x.v>0?'inc':'exp'}">${x.v>0?'+':'−'}${inr(Math.abs(x.v))}</div></div>`).join('') : '<div class="empty">No cash movement</div>'}</div>`;
+  } else if (kind === 'receive' || kind === 'pay') {
+    const arr = DB.parties.map(p => ({p, b: bal[p.id]||0})).filter(x => kind === 'receive' ? x.b > 0.5 : x.b < -0.5).sort((a,b) => Math.abs(b.b) - Math.abs(a.b));
+    title = kind === 'receive' ? '⏳ To Receive (all time)' : '💸 To Pay (all time)';
+    body = `<div class="card"><div class="big ${kind==='receive'?'pen':'exp'}">${inr(Math.abs(sum(arr, x => x.b)))}</div><div style="font-size:12px;color:var(--mu)">${arr.length} parties · tap a name for full account</div></div><div class="card">${partyList(arr)}</div>`;
+  } else if (kind === 'loans') { A.go('loans'); return; }
+  else if (kind === 'advance' || kind === 'deposit') {
+    const key = kind === 'advance' ? 'bookingId' : 'leaseId', src = kind === 'advance' ? DB.bookings : DB.leases;
+    const arr = src.map(o => ({o, h: heldOf(key, o.id)})).filter(x => x.h > 0.5);
+    title = kind === 'advance' ? '📥 Advance Held (Bookings)' : '📥 Deposit Held (Leases)';
+    body = `<div class="card"><div class="big blu">${inr(sum(arr, x => x.h))}</div></div><div class="card">${arr.length ? arr.map(x => `<div class="item" onclick="${kind==='advance' ? `A.booking('${x.o.id}')` : `A.close();A.go('leases')`}"><div class="av" style="background:#e0e7ff">📥</div><div class="mid"><div class="t">${esc(pName(x.o.partyId))}</div><div class="s">${esc(mName(x.o.machineId))} · ${fd(x.o.from || x.o.start)} · ${esc(x.o.status||'')}</div></div><div class="amt blu">${inr(x.h)}</div></div>`).join('') : '<div class="empty">Nothing held</div>'}</div>`;
+  } else if (kind === 'bookings') { S.bkStatus = 'Booked'; A.go('bookings'); return; }
+  else if (kind === 'leases') { A.go('leases'); return; }
+  openSheet(title, body);
+}
+
 /* ---------- transaction form ---------- */
 function txForm(id, preset = {}){
   const t = id ? {...DB.txns.find(x => x.id === id)} : {type:'income', date:today(), mode:'Cash', ...preset};
@@ -543,7 +600,8 @@ function txForm(id, preset = {}){
       if (d.partyId === '__new') d.partyId = '';
       if (!ie && !d.partyId) return toast('Select party'), false;
       if (ie && paid < amount && !d.partyId) return toast('Select party to track pending amount'), false;
-      const rec = { type:d.type, date:d.date, mode:d.mode, partyId:d.partyId, leaseId:d.leaseId||'', bookingId:d.bookingId||'', note:d.note.trim(), amount, paid,
+      const rec = { type:d.type, date:d.date, mode:d.mode, partyId:d.partyId, leaseId:d.leaseId||'', bookingId:d.bookingId||'', note: (() => { const rest = d.note.trim().replace(/^\d+ min( · )?/, ''), m = ie ? Math.round(num(d.th) * 60 + num(d.tm)) : 0;
+          return m ? [`${m} min`, rest].filter(Boolean).join(' · ') : rest; })(), amount, paid,
         machineId: ie ? d.machineId : '', category: ie ? d.category : TYPE_LBL[d.type], qty: ie ? d.qty : '', rate: ie ? d.rate : '',
         mins: ie && (num(d.th) || num(d.tm)) ? Math.round(num(d.th) * 60 + num(d.tm)) : '', unit: ie && (num(d.th) || num(d.tm)) ? (t.unit || 'hr') : '' };
       if (id) store.set('txns', id, rec);
@@ -824,34 +882,86 @@ function leaseFuelForm(lid){
   };
   ['qty','rate','amount'].forEach(n => E[n].addEventListener('input', u)); E.category.addEventListener('change', () => { const dsl = E.category.value === 'Diesel'; E.qty.closest('.row').classList.toggle('hidden', !dsl); }); u();
 }
-function leaseStatement(lid){
-  const l = DB.leases.find(x => x.id === lid); if (!l) return;
+function leaseLedgerData(lid){
+  const l = DB.leases.find(x => x.id === lid); if (!l) return null;
   const p = party(l.partyId) || {}, from = l.start || '0000';
-  const L = DB.txns.filter(t => (t.leaseId === lid && ['income','expense','adjust'].includes(t.type)) || (t.partyId === l.partyId && t.type === 'receipt' && t.date >= from) || (t.partyId === l.partyId && t.type === 'payment' && t.date >= from)).sort(byDateAsc);
-  let rent = 0, cost = 0, recd = 0, adj = 0;
-  const rows = L.map(t => { const a = num(t.amount);
-    let lbl, v, cls;
-    if (t.type === 'income') { rent += a; recd += num(t.paid); lbl = 'Rent'; v = '+' + inr(a); cls = 'inc'; }
-    else if (t.type === 'expense') { cost += a - num(t.paid); lbl = (t.category === 'Diesel' ? '⛽ Fuel' : t.category) + ' by lessee'; v = '−' + inr(a - num(t.paid)); cls = 'exp'; }
-    else if (t.type === 'adjust') { adj += a; lbl = 'Deposit adjusted'; v = '−' + inr(a); cls = 'exp'; }
-    else if (t.type === 'receipt') { recd += a; lbl = '💰 Received'; v = '−' + inr(a); cls = 'blu'; }
-    else { recd -= a; lbl = 'Paid to lessee'; v = '+' + inr(a); cls = 'pen'; }
-    return `<tr onclick="A.editTx('${t.id}')"><td>${fd(t.date)}</td><td>${esc(lbl)}${qtyText(t) ? `<br><small>${esc(qtyText(t))}</small>` : ''}</td><td class="n ${cls}">${v}</td></tr>`; }).join('');
-  const bal = rent - cost - adj - recd;
-  const msg = encodeURIComponent(`NAYAK Agro – Lease Statement\n${mName(l.machineId)} → ${p.name||''}\nFrom ${fd(l.start)}\n\nRent: ₹${Math.round(rent).toLocaleString('en-IN')}\nLess fuel/cost by you: ₹${Math.round(cost).toLocaleString('en-IN')}${adj ? `\nLess deposit adjusted: ₹${Math.round(adj).toLocaleString('en-IN')}` : ''}\nLess received: ₹${Math.round(recd).toLocaleString('en-IN')}\n\n${bal >= 0 ? 'Balance to pay' : 'We owe you'}: ₹${Math.round(Math.abs(bal)).toLocaleString('en-IN')}\nDhanyavad 🙏`);
+  const L = DB.txns.filter(t => (t.leaseId === lid && ['income','expense','adjust'].includes(t.type)) || (t.partyId === l.partyId && ['receipt','payment'].includes(t.type) && t.date >= from)).sort(byDateAsc);
+  const S = {mins:0, rent:0, fuelL:0, fuel:0, other:0, recd:0, adj:0};
+  let run = 0;
+  const rows = L.map(t => {
+    const a = num(t.amount), pd = num(t.paid); let rent = 0, ded = 0, rec = 0, det;
+    if (t.type === 'income') { rent = a; rec = pd; S.rent += a; S.recd += pd; S.mins += num(t.mins); det = 'Rent' + (num(t.mins) ? ` · ${num(t.mins)} min` : '') + (t.rate ? ` @ ${inr(t.rate)}/${t.unit === 'min' ? 'min' : 'hr'}` : ''); }
+    else if (t.type === 'expense') { ded = a - pd; if (t.category === 'Diesel') { S.fuel += ded; S.fuelL += num(t.qty); det = `Fuel by lessee${t.qty ? ` · ${t.qty} L @ ${inr(t.rate)}` : ''}`; } else { S.other += ded; det = `${t.category} by lessee`; } }
+    else if (t.type === 'adjust') { ded = a; S.adj += a; det = 'Security deposit adjusted'; }
+    else if (t.type === 'receipt') { rec = a; S.recd += a; det = `Payment received (${t.mode || 'Cash'})`; }
+    else { rec = -a; S.recd -= a; det = 'Paid to lessee'; }
+    run += rent - ded - rec;
+    return {t, date: t.date, det, note: (t.note || '').replace(/^\d+ min( · )?/, '').replace(/^Paid by lessee – deducted from rent( · )?/, ''), rent, ded, rec, run};
+  });
+  const depIn = sum(DB.txns.filter(t => t.leaseId === lid && t.type === 'advance'), t => num(t.amount));
+  const depOut = sum(DB.txns.filter(t => t.leaseId === lid && t.type === 'refund'), t => num(t.amount));
+  const depKept = sum(DB.txns.filter(t => t.leaseId === lid && t.type === 'forfeit'), t => num(t.amount));
+  const held = heldOf('leaseId', lid), bal = S.rent - S.fuel - S.other - S.adj - S.recd;
+  return {l, p, rows, S, bal, held, net: bal - held, depIn, depOut, depKept};
+}
+const minsTxt = m => `${hm(m)} (${Math.round(m)} min)`;
+function leaseStatement(lid){
+  const D = leaseLedgerData(lid); if (!D) return;
+  const {l, p, rows, S, bal, held, net} = D;
+  const msg = encodeURIComponent(`NAYAK Agro – Lease Ledger\n${mName(l.machineId)} → ${p.name||''}\nFrom ${fd(l.start)} till ${fd(today())}\n\nTotal time: ${minsTxt(S.mins)}\nRent: ₹${Math.round(S.rent).toLocaleString('en-IN')}\nLess fuel${S.fuelL ? ' (' + S.fuelL + ' L)' : ''}: ₹${Math.round(S.fuel).toLocaleString('en-IN')}${S.other ? `\nLess other costs: ₹${Math.round(S.other).toLocaleString('en-IN')}` : ''}${S.adj ? `\nLess deposit adjusted: ₹${Math.round(S.adj).toLocaleString('en-IN')}` : ''}\nLess received: ₹${Math.round(S.recd).toLocaleString('en-IN')}\nBalance: ₹${Math.round(bal).toLocaleString('en-IN')}\nSecurity deposit held: ₹${Math.round(held).toLocaleString('en-IN')}\n\n${net >= 0 ? 'Final amount to pay' : 'Final refund to you'}: ₹${Math.round(Math.abs(net)).toLocaleString('en-IN')}\nDhanyavad 🙏`);
   const ph = (p.phone||'').replace(/\D/g,'').slice(-10);
-  openSheet('📋 Lease Statement', `
+  openSheet('📋 Lease Ledger', `
     <div style="font-size:13px;color:var(--mu);margin-bottom:8px">${esc(mName(l.machineId))} → <b>${esc(p.name||'')}</b> · from ${fd(l.start)}</div>
     <div class="card"><table>
-      <tr><td>Total rent</td><td class="n inc">${inr(rent)}</td></tr>
-      <tr><td>Less: fuel / cost paid by lessee</td><td class="n exp">− ${inr(cost)}</td></tr>
-      ${adj ? `<tr><td>Less: deposit adjusted</td><td class="n exp">− ${inr(adj)}</td></tr>` : ''}
-      <tr><td>Less: received from lessee</td><td class="n blu">− ${inr(recd)}</td></tr>
-      <tr><th>${bal >= 0 ? 'Lessee has to pay' : 'You owe lessee'}</th><th class="n big ${bal >= 0 ? 'pen' : 'exp'}" style="font-size:20px">${inr(Math.abs(bal))}</th></tr></table></div>
+      <tr><td>⏱ Total working time</td><td class="n"><b>${minsTxt(S.mins)}</b></td></tr>
+      <tr><td>Total rent</td><td class="n inc">${inr(S.rent)}</td></tr>
+      <tr><td>Less: fuel by lessee${S.fuelL ? ` (${S.fuelL} L)` : ''}</td><td class="n exp">− ${inr(S.fuel)}</td></tr>
+      ${S.other ? `<tr><td>Less: other costs by lessee</td><td class="n exp">− ${inr(S.other)}</td></tr>` : ''}
+      ${S.adj ? `<tr><td>Less: deposit already adjusted</td><td class="n exp">− ${inr(S.adj)}</td></tr>` : ''}
+      <tr><td>Less: received from lessee</td><td class="n blu">− ${inr(S.recd)}</td></tr>
+      <tr><th>Balance ${bal >= 0 ? 'to pay' : 'we owe'}</th><th class="n">${inr(Math.abs(bal))}</th></tr>
+      <tr><td>Security deposit held</td><td class="n blu">− ${inr(held)}</td></tr>
+      <tr style="background:${net >= 0 ? '#fef3c7' : '#fee2e2'}"><th>${net >= 0 ? 'Final: lessee has to pay' : 'Final: refund to lessee'}</th><th class="n" style="font-size:20px">${inr(Math.abs(net))}</th></tr></table></div>
+    <div class="btns" style="margin-bottom:8px"><button type="button" class="btn s" onclick="A.ledgerPdf('${lid}')">⬇ Download PDF</button>
+      ${ph ? `<a class="btn s" style="background:#25d366;text-decoration:none;text-align:center" href="https://wa.me/91${ph}?text=${msg}" target="_blank">WhatsApp</a>` : ''}</div>
     <div class="btns" style="margin-bottom:10px">
       ${bal > 0.5 ? `<button type="button" class="btn s b" onclick="A.newTx('receipt',{partyId:'${l.partyId}',amount:${Math.round(bal)}})">💰 Receive ${inr(bal)}</button>` : ''}
-      ${ph ? `<a class="btn s" style="background:#25d366;text-decoration:none;text-align:center" href="https://wa.me/91${ph}?text=${msg}" target="_blank">Send on WhatsApp</a>` : ''}</div>
-    <table><tr><th>Date</th><th>Detail</th><th class="n">Amount</th></tr>${rows || '<tr><td colspan="3" class="empty">No entries yet</td></tr>'}</table>`);
+      ${held > 0.5 ? `<button type="button" class="btn s o" onclick="A.settle('leaseId','${lid}')">↩️ Adjust / Refund Deposit</button>` : ''}</div>
+    <table><tr><th>Date</th><th>Detail</th><th class="n">Amount</th></tr>
+    ${[...rows].reverse().map(r => `<tr onclick="A.editTx('${r.t.id}')"><td>${fd(r.date)}</td><td>${esc(r.det)}${r.note ? `<br><small>${esc(r.note)}</small>` : ''}</td><td class="n ${r.rent ? 'inc' : r.ded ? 'exp' : 'blu'}">${r.rent ? '+' + inr(r.rent) : '−' + inr(r.ded || r.rec)}${r.rent && r.rec ? `<br><small class="blu">recd ${inr(r.rec)}</small>` : ''}</td></tr>`).join('') || '<tr><td colspan="3" class="empty">No entries yet</td></tr>'}</table>`);
+}
+function ledgerPdf(lid){
+  const D = leaseLedgerData(lid); if (!D) return;
+  const {l, p, rows, S, bal, held, net, depIn, depOut, depKept} = D, r = v => v ? inr(v) : '';
+  const html = `<div class="pl">
+    <div class="ph"><div><div class="pt">NAYAK AGRO</div><div>Harvester · Tractor · Lease</div></div><div style="text-align:right"><b>LEASE LEDGER</b><br>Date: ${fd(today())}</div></div>
+    <table class="pi"><tr><td><b>Lessee:</b> ${esc(p.name||'')}${p.phone ? ' · ' + esc(p.phone) : ''}${p.village ? '<br>' + esc(p.village) : ''}</td>
+      <td><b>Machine:</b> ${esc(mName(l.machineId))}<br><b>Rate:</b> ${inr(l.rent)} ${esc(l.basis)}<br><b>Period:</b> ${fd(l.start)} to ${l.end ? fd(l.end) : fd(today())}</td></tr></table>
+    <h3>Summary</h3>
+    <table class="ps">
+      <tr><td>Total working time</td><td>${minsTxt(S.mins)}</td></tr>
+      <tr><td>Total rent</td><td>${inr(S.rent)}</td></tr>
+      <tr><td>Less: fuel put by lessee${S.fuelL ? ` (${S.fuelL} litres)` : ''}</td><td>− ${inr(S.fuel)}</td></tr>
+      <tr><td>Less: other costs paid by lessee</td><td>− ${inr(S.other)}</td></tr>
+      ${S.adj ? `<tr><td>Less: security deposit already adjusted</td><td>− ${inr(S.adj)}</td></tr>` : ''}
+      <tr><td>Less: payments received</td><td>− ${inr(S.recd)}</td></tr>
+      <tr class="b"><td>Balance ${bal >= 0 ? 'payable by lessee' : 'payable to lessee'}</td><td>${inr(Math.abs(bal))}</td></tr>
+      <tr><td>Security deposit: received ${inr(depIn)}${depOut ? ` · refunded ${inr(depOut)}` : ''}${S.adj ? ` · adjusted ${inr(S.adj)}` : ''}${depKept ? ` · kept ${inr(depKept)}` : ''} → <b>held</b></td><td>− ${inr(held)}</td></tr>
+      <tr class="f"><td>${net >= 0 ? 'FINAL AMOUNT PAYABLE BY LESSEE (after adjusting deposit)' : 'FINAL AMOUNT REFUNDABLE TO LESSEE (after adjusting deposit)'}</td><td>${inr(Math.abs(net))}</td></tr></table>
+    <h3>Details</h3>
+    <table class="pd"><tr><th>Date</th><th>Particulars</th><th>Time (min)</th><th>Rent</th><th>Deduction</th><th>Received</th><th>Balance</th></tr>
+    ${rows.map(x => `<tr><td>${fd(x.date)}</td><td>${esc(x.det)}${x.note ? '<br><small>' + esc(x.note) + '</small>' : ''}</td><td>${num(x.t.mins) && x.t.type === 'income' ? num(x.t.mins) : ''}</td><td>${r(x.rent)}</td><td>${r(x.ded)}</td><td>${r(x.rec)}</td><td>${inr(x.run)}</td></tr>`).join('')}
+    <tr class="b"><td></td><td>Total</td><td>${Math.round(S.mins)}</td><td>${inr(S.rent)}</td><td>${inr(S.fuel + S.other + S.adj)}</td><td>${inr(S.recd)}</td><td>${inr(bal)}</td></tr></table>
+    <div class="sg"><div>Lessee signature</div><div>For NAYAK AGRO</div></div></div>`;
+  printHtml(html, `NAYAK-Lease-Ledger-${(p.name||'lessee').replace(/\s+/g,'-')}-${today()}`);
+}
+function printHtml(html, title){
+  let pa = $('#printArea'); if (!pa) { pa = document.createElement('div'); pa.id = 'printArea'; document.body.appendChild(pa); }
+  pa.innerHTML = html; const old = document.title; document.title = title;
+  document.body.classList.add('printing');
+  const done = () => { document.body.classList.remove('printing'); document.title = old; removeEventListener('afterprint', done); };
+  addEventListener('afterprint', done);
+  setTimeout(() => window.print(), 100);
 }
 
 /* ---------- lease rent bill by time (per hour / per minute) ---------- */
@@ -876,7 +986,7 @@ function leaseTimeBill(lid){
       const meter = d.ms && d.me ? ` · meter ${d.ms}→${d.me}` : '';
       store.add('txns', {type:'income', category:'Lease Rent', machineId:l.machineId, partyId:l.partyId, leaseId:lid, date:d.date, mode:d.mode,
         qty: perMin ? mins : +(mins/60).toFixed(2), rate: num(d.rate), amount, paid, mins, unit: perMin ? 'min' : 'hr',
-        note: [`${Math.floor(mins/60)}h ${mins%60}m${meter}${d.to ? ' · till ' + fd(d.to) : ''}`, d.note.trim()].filter(Boolean).join(' · ')});
+        note: [`${mins} min${meter}${d.to ? ' · till ' + fd(d.to) : ''}`, d.note.trim()].filter(Boolean).join(' · ')});
     } });
   const E = f.elements;
   const calc = () => {
@@ -1008,12 +1118,15 @@ window.A = {
   holdNew: (key, id) => holdNew(key, id),
   settle: (key, id, cancel) => settleForm(key, id, !!cancel),
   bk(k, v){ S[k] = v; render(); },
+  hd: k => homeDetail(k),
+  bookType(t){ S.bf = {type:t, machine:'', party:'', q:''}; A.go('book'); },
   party: id => partyView(id),
   editParty: id => partyForm(id),
   machine: id => machineForm(id),
   lease: id => leaseForm(id),
   leaseFuel: id => leaseFuelForm(id),
   leaseStmt: id => leaseStatement(id),
+  ledgerPdf: id => ledgerPdf(id),
   leaseBill(id){ const l = DB.leases.find(x => x.id === id); if (TIME_BASIS.includes(l.basis)) return leaseTimeBill(id); txForm(null, {type:'income', category:'Lease Rent', machineId:l.machineId, partyId:l.partyId, leaseId:id, amount:l.rent||'', paid:'0', note:`Lease rent (${l.basis})`}); },
   loan: id => loanView(id),
   editLoan: id => loanForm(id),
