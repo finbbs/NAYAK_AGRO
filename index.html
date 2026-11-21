@@ -91,7 +91,7 @@ table{width:100%;border-collapse:collapse;font-size:13px}td,th{padding:7px 4px;b
     <button data-t="home" onclick="A.go('home')"><span class="i">🏠</span>Home</button>
     <button data-t="book" onclick="A.go('book')"><span class="i">📒</span>Day Book</button>
     <button data-t="parties" onclick="A.go('parties')"><span class="i">👥</span>Parties</button>
-    <button data-t="loans" onclick="A.go('loans')"><span class="i">🏦</span>Loans</button>
+    <button data-t="leases" onclick="A.go('leases')"><span class="i">📄</span>Lease</button>
     <button data-t="more" onclick="A.go('more')"><span class="i">☰</span>More</button>
   </nav>
 </div>
@@ -124,7 +124,7 @@ const TYPE_LBL = {income:'Income',expense:'Expense',receipt:'Received',payment:'
 const ICON = {income:'🌾',expense:'⛽',receipt:'💰',payment:'💸',advance:'📥',refund:'↩️',adjust:'🔁',forfeit:'📌'};
 const TBG = {income:'#dcfce7',expense:'#fee2e2',receipt:'#dbeafe',payment:'#fef3c7',advance:'#e0e7ff',refund:'#fce7f3',adjust:'#f1f5f9',forfeit:'#dcfce7'};
 const holdLbl = t => t.leaseId ? TYPE_LBL[t.type].replace('Advance','Deposit') : TYPE_LBL[t.type];
-const BOOK_UNITS = ['Acre','Hour','Day','Trip','Season'];
+const BOOK_UNITS = ['Hour','Minute','Acre','Day','Trip','Season'];
 const CATS = {
   income:['Harvesting Work','Tractor Work (Ploughing/Cultivation)','Tractor Trolley / Transport','Lease Rent','Other Income'],
   expense:['Diesel','Repair & Maintenance','Spare Parts','Driver / Operator Salary','Helper Wages','Insurance','Tax / Permit / RTO','Transport / Shifting','Food & Misc','Other Expense']
@@ -132,7 +132,8 @@ const CATS = {
 const MACHINE_TYPES = ['Harvester','Tractor','Trolley','Rotavator','Cultivator','Other'];
 const PARTY_KINDS = ['Client / Farmer','Lessee (Lease)','Supplier / Shop','Driver / Staff','Lender','Other'];
 const LOAN_KINDS = ['Bank Loan','Hand Loan (Family/Friend)','Machine Finance','Other'];
-const LEASE_BASIS = ['Per Month','Per Season','Per Acre','Per Year','Lump Sum'];
+const LEASE_BASIS = ['Per Hour','Per Minute','Per Acre','Per Day','Per Month','Per Season','Lump Sum'];
+const TIME_BASIS = ['Per Hour','Per Minute'];
 const MODES = ['Cash','UPI','Bank','Cheque'];
 
 /* ---------- helpers ---------- */
@@ -277,7 +278,7 @@ function render(){
   const ae = document.activeElement, aid = ae && v.contains(ae) && ae.id, pos = aid && ae.selectionStart;
   v.innerHTML = (VIEWS[S.tab] || VIEWS.home)();
   if (aid) { const n = document.getElementById(aid); if (n) { n.focus(); try { n.setSelectionRange(pos,pos); } catch(e){} } }
-  const navTab = ['machines','leases','reports','settings','bookings'].includes(S.tab) ? 'more' : S.tab;
+  const navTab = ['machines','reports','settings','bookings','loans'].includes(S.tab) ? 'more' : S.tab;
   document.querySelectorAll('#nav button').forEach(b => b.classList.toggle('on', b.dataset.t === navTab));
   $('#fab').classList.toggle('hidden', !FAB_TABS.includes(S.tab));
 }
@@ -377,7 +378,7 @@ const VIEWS = {
     const row = ({l,s}) => `<div class="item" onclick="A.loan('${l.id}')"><div class="av" style="background:${l.kind==='Bank Loan'?'#dbeafe':'#fef3c7'}">${l.kind==='Bank Loan'?'🏦':'🤝'}</div>
       <div class="mid"><div class="t">${esc(l.lender)}</div><div class="s">${esc(l.kind)} · ${fd(l.date)} · ${num(l.rate)}% p.a.${l.emi?` · EMI ${inr(l.emi)}`:''}</div></div>
       <div class="amt exp">${inr(s.out)}<small class="pen">${s.due>0.5?'Int. due ~'+inr(s.due):'of '+inr(l.principal)}</small></div></div>`;
-    return `<div class="grid" style="margin-bottom:8px">${stat('Total Outstanding', inr(out), 'exp')}${stat('Interest Due (approx)', inr(due), 'pen')}${stat('Interest Paid (all)', inr(ip))}${stat('Open Loans', open.length, 'blu')}</div>
+    return sub('🏦 Loans &amp; EMI') + `<div class="grid" style="margin-bottom:8px">${stat('Total Outstanding', inr(out), 'exp')}${stat('Interest Due (approx)', inr(due), 'pen')}${stat('Interest Paid (all)', inr(ip))}${stat('Open Loans', open.length, 'blu')}</div>
     <h2>Open Loans</h2><div class="card">${open.length ? open.map(row).join('') : '<div class="empty">No loans. Tap + to add bank or hand loan.</div>'}</div>
     ${closed.length ? `<h2>Closed</h2><div class="card">${closed.map(row).join('')}</div>` : ''}`;
   },
@@ -385,8 +386,8 @@ const VIEWS = {
   more(){
     return `<div class="tiles">
       <button class="tile" onclick="A.go('bookings')"><span class="i">📅</span>Bookings &amp; Advance</button>
+      <button class="tile" onclick="A.go('loans')"><span class="i">🏦</span>Loans &amp; EMI</button>
       <button class="tile" onclick="A.go('machines')"><span class="i">🚜</span>Machines</button>
-      <button class="tile" onclick="A.go('leases')"><span class="i">📄</span>Lease / Rent</button>
       <button class="tile" onclick="A.go('reports')"><span class="i">📊</span>Reports</button>
       <button class="tile" onclick="A.go('settings')"><span class="i">⚙️</span>Settings &amp; Backup</button>
       <button class="tile" onclick="A.go('parties');A.dueOnly(true)"><span class="i">⏳</span>Pending Dues</button></div>
@@ -412,7 +413,7 @@ const VIEWS = {
         <div class="btns"><button class="btn s" onclick="A.leaseBill('${l.id}')">+ Rent Bill</button><button class="btn s r" onclick="A.leaseFuel('${l.id}')">⛽ Fuel by Lessee</button><button class="btn s b" onclick="A.newTx('receipt',{partyId:'${l.partyId}'})">💰 Receive</button></div>
         <div class="btns" style="margin-top:8px"><button class="btn s o" onclick="A.leaseStmt('${l.id}')">📋 Statement</button><button class="btn s o" onclick="A.holdNew('leaseId','${l.id}')">📥 + Deposit</button>${dh>0.5?`<button class="btn s o" onclick="A.settle('leaseId','${l.id}')">↩️ Deposit</button>`:''}<button class="btn s o" onclick="A.lease('${l.id}')">✏️ Edit</button></div></div>`; };
     const act = DB.leases.filter(l => l.status!=='Closed'), cl = DB.leases.filter(l => l.status==='Closed');
-    return sub('📄 Machines on Lease / Rent') + (DB.leases.length ? act.map(row).join('') + (cl.length ? '<h2>Closed</h2>' + cl.map(row).join('') : '') : '<div class="card empty">No lease records. Tap + when you give a machine on rent.</div>');
+    return `<h2 style="margin-top:0">📄 Machines on Lease / Rent</h2>` + (DB.leases.length ? act.map(row).join('') + (cl.length ? '<h2>Closed</h2>' + cl.map(row).join('') : '') : '<div class="card empty">No lease records. Tap + when you give a machine on rent.</div>');
   },
 
   bookings(){
@@ -519,7 +520,9 @@ function txForm(id, preset = {}){
     <div id="partyDue" style="font-size:12px;margin:-4px 0 8px"></div>
     <div class="ie"><label>Machine<select name="machineId">${machineOpts(t.machineId)}</select></label>
       <label>Category<select name="category"></select></label>
-      <div class="row"><label>Qty (acre / hr / trip)<input name="qty" inputmode="decimal" value="${esc(t.qty||'')}"></label><label>Rate ₹<input name="rate" inputmode="decimal" value="${esc(t.rate||'')}"></label></div></div>
+      <div class="row" style="align-items:flex-end"><label>⏱ Time: Hours<input name="th" inputmode="numeric" placeholder="hr"></label><label>Minutes<input name="tm" inputmode="numeric" placeholder="min"></label></div>
+      <div class="row"><label>Qty (hr / acre / trip)<input name="qty" inputmode="decimal" value="${esc(t.qty||'')}"></label><label>Rate ₹<input name="rate" inputmode="decimal" value="${esc(t.rate||'')}"></label></div>
+      <div id="timeInfo" style="font-size:12px;color:var(--mu);margin:-4px 0 8px">Per-hour work: fill Hours + Minutes, Qty fills itself</div></div>
     <label>Total Amount ₹<input name="amount" inputmode="decimal" required value="${esc(t.amount ?? '')}" style="font-size:18px;font-weight:700"></label>
     <div class="ie"><label><span id="paidLbl">Received now ₹</span><input name="paid" inputmode="decimal" value="${esc(t.paid ?? '')}" placeholder="Blank = full amount"></label>
       <div id="dueInfo" style="font-size:13px;margin:-4px 0 8px;font-weight:600" class="pen"></div></div>
@@ -558,6 +561,9 @@ function txForm(id, preset = {}){
   };
   f.querySelectorAll('#tseg button').forEach(b => b.onclick = () => setType(b.dataset.v));
   ['qty','rate','amount','paid','partyId'].forEach(n => E[n].addEventListener('input', upd));
+  const tUpd = () => { const mins = num(E.th.value) * 60 + num(E.tm.value); if (!mins) return;
+    E.qty.value = +(mins / 60).toFixed(2); $('#timeInfo').textContent = `${Math.floor(mins/60)} h ${Math.round(mins%60)} m = ${E.qty.value} hours`; upd(); };
+  E.th.addEventListener('input', tUpd); E.tm.addEventListener('input', tUpd);
   E.partyId.addEventListener('change', () => {   // pending mode: fill full due automatically
     upd(); if (!pend || id || E.amount.value) return;
     const b = partyBalances()[E.partyId.value] || 0, ty = E.type.value;
@@ -637,12 +643,12 @@ function machineForm(id){
 
 /* ---------- lease ---------- */
 function leaseForm(id, preset = {}, onDone){
-  const l = id ? DB.leases.find(x => x.id === id) : {start:today(), basis:'Per Month', status:'Active', ...preset};
+  const l = id ? DB.leases.find(x => x.id === id) : {start:today(), basis:'Per Hour', status:'Active', ...preset};
   const f = openSheet(id ? 'Edit Lease' : 'Give Machine on Lease', `
     <label>Machine *<select name="machineId" required>${machineOpts(l.machineId, '— Select machine —')}</select></label>
     <label>Lessee (who takes the machine) *<select name="partyId">${partyOpts(l.partyId, '— Select party —')}</select></label>
     <div class="row"><label>Start date<input type="date" name="start" value="${esc(l.start||'')}"></label><label>End date<input type="date" name="end" value="${esc(l.end||'')}"></label></div>
-    <div class="row"><label>Rent ₹<input name="rent" inputmode="decimal" value="${esc(l.rent||'')}"></label><label>Basis<select name="basis">${opts(LEASE_BASIS, l.basis)}</select></label></div>
+    <div class="row"><label>Rent rate ₹<input name="rent" inputmode="decimal" value="${esc(l.rent||'')}" placeholder="e.g. 2500"></label><label>Basis<select name="basis">${opts(LEASE_BASIS, l.basis)}</select></label></div>
     <div class="row"><label>Security deposit (agreed) ₹<input name="deposit" inputmode="decimal" value="${esc(l.deposit||'')}"></label><label>Status<select name="status">${opts(['Active','Closed'], l.status)}</select></label></div>
     ${!id ? `<div class="row" style="align-items:center"><label style="display:flex;gap:6px;align-items:center;font-size:13px;color:var(--tx)"><input type="checkbox" name="depRecd" checked style="width:auto;margin:0"> Deposit received now</label><label>Mode<select name="depMode">${opts(MODES,'Cash')}</select></label></div>` : '<p style="font-size:12px;color:var(--mu);margin:0 0 8px">Record deposit money with “+ Deposit” on the lease card.</p>'}
     <div id="lclash" class="exp" style="font-size:13px;margin-bottom:8px"></div>
@@ -663,7 +669,7 @@ function leaseForm(id, preset = {}, onDone){
 
 /* ---------- bookings & advance / deposit ---------- */
 function bookingForm(id, preset = {}){
-  const b = id ? DB.bookings.find(x => x.id === id) : {kind:'Work', from:today(), unit:'Acre', status:'Booked', ...preset};
+  const b = id ? DB.bookings.find(x => x.id === id) : {kind:'Work', from:today(), unit:'Hour', status:'Booked', ...preset};
   const f = openSheet(id ? 'Edit Booking' : 'New Booking', `
     <div class="row"><label>Booking for<select name="kind">${['Work','Lease'].map(k => `<option value="${k}" ${b.kind===k?'selected':''}>${k==='Work'?'Work (we operate)':'Lease (give on rent)'}</option>`).join('')}</select></label>
       <label>Machine *<select name="machineId">${machineOpts(b.machineId, '— Select —')}</select></label></div>
@@ -837,6 +843,42 @@ function leaseStatement(lid){
     <table><tr><th>Date</th><th>Detail</th><th class="n">Amount</th></tr>${rows || '<tr><td colspan="3" class="empty">No entries yet</td></tr>'}</table>`);
 }
 
+/* ---------- lease rent bill by time (per hour / per minute) ---------- */
+function leaseTimeBill(lid){
+  const l = DB.leases.find(x => x.id === lid); if (!l) return;
+  const perMin = l.basis === 'Per Minute';
+  const f = openSheet('⏱ Rent Bill (by time)', `
+    <div class="card" style="background:#dcfce7;font-size:13px"><b>${esc(mName(l.machineId))}</b> → ${esc(pName(l.partyId))}<br>Rate: <b>${inr(l.rent)} ${perMin ? 'per minute' : 'per hour'}</b></div>
+    <div class="row"><label>Date<input type="date" name="date" value="${today()}"></label><label>Till date (optional)<input type="date" name="to"></label></div>
+    <div style="font-size:12px;color:var(--mu);margin-bottom:4px">Hour meter reading (optional) — fills time automatically</div>
+    <div class="row"><label>Meter start<input name="ms" inputmode="decimal" placeholder="e.g. 1250.5"></label><label>Meter end<input name="me" inputmode="decimal" placeholder="e.g. 1254.2"></label></div>
+    <div class="row"><label>Hours<input name="h" inputmode="numeric" style="font-size:18px;font-weight:700"></label><label>Minutes<input name="m" inputmode="numeric" style="font-size:18px;font-weight:700"></label></div>
+    <label>Rate ₹ ${perMin ? 'per minute' : 'per hour'}<input name="rate" inputmode="decimal" value="${esc(l.rent||'')}"></label>
+    <div id="ltInfo" style="font-size:13px;font-weight:600;margin:-4px 0 8px" class="blu"></div>
+    <label>Total Rent ₹ *<input name="amount" inputmode="decimal" required style="font-size:20px;font-weight:800"></label>
+    <div class="row"><label>Received now ₹<input name="paid" inputmode="decimal" value="0"></label><label>Mode<select name="mode">${opts(MODES,'Cash')}</select></label></div>
+    <label>Note (field, village…)<input name="note"></label>`,
+  { onSave: d => {
+      const mins = Math.round(num(d.h) * 60 + num(d.m)), amount = num(d.amount), paid = num(d.paid);
+      if (amount <= 0) return toast('Enter hours/minutes or total'), false;
+      if (paid > amount) return toast('Received cannot be more than total'), false;
+      const meter = d.ms && d.me ? ` · meter ${d.ms}→${d.me}` : '';
+      store.add('txns', {type:'income', category:'Lease Rent', machineId:l.machineId, partyId:l.partyId, leaseId:lid, date:d.date, mode:d.mode,
+        qty: perMin ? mins : +(mins/60).toFixed(2), rate: num(d.rate), amount, paid,
+        note: [`${Math.floor(mins/60)}h ${mins%60}m${meter}${d.to ? ' · till ' + fd(d.to) : ''}`, d.note.trim()].filter(Boolean).join(' · ')});
+    } });
+  const E = f.elements;
+  const calc = () => {
+    const mins = num(E.h.value) * 60 + num(E.m.value), r = num(E.rate.value);
+    if (mins && r && document.activeElement !== E.amount) E.amount.value = Math.round(perMin ? mins * r : mins * r / 60);
+    $('#ltInfo').textContent = mins ? `${Math.floor(mins/60)} h ${Math.round(mins%60)} m = ${Math.round(mins)} min = ${(mins/60).toFixed(2)} hrs → ${inr(num(E.amount.value))}` : '';
+  };
+  const meter = () => { const diff = num(E.me.value) - num(E.ms.value); if (!E.ms.value || !E.me.value || diff <= 0) return;
+    const mins = Math.round(diff * 60); E.h.value = Math.floor(mins / 60); E.m.value = mins % 60; calc(); };
+  ['h','m','rate','amount'].forEach(n => E[n].addEventListener('input', calc));
+  ['ms','me'].forEach(n => E[n].addEventListener('input', meter));
+}
+
 /* ---------- loans ---------- */
 function loanForm(id){
   const l = id ? DB.loans.find(x => x.id === id) : {kind:'Bank Loan', date:today(), status:'Open'};
@@ -961,7 +1003,7 @@ window.A = {
   lease: id => leaseForm(id),
   leaseFuel: id => leaseFuelForm(id),
   leaseStmt: id => leaseStatement(id),
-  leaseBill(id){ const l = DB.leases.find(x => x.id === id); txForm(null, {type:'income', category:'Lease Rent', machineId:l.machineId, partyId:l.partyId, leaseId:id, amount:l.rent||'', paid:'0', note:`Lease rent (${l.basis})`}); },
+  leaseBill(id){ const l = DB.leases.find(x => x.id === id); if (TIME_BASIS.includes(l.basis)) return leaseTimeBill(id); txForm(null, {type:'income', category:'Lease Rent', machineId:l.machineId, partyId:l.partyId, leaseId:id, amount:l.rent||'', paid:'0', note:`Lease rent (${l.basis})`}); },
   loan: id => loanView(id),
   editLoan: id => loanForm(id),
   loanPay: (lid, pid) => loanPayForm(lid, pid),
