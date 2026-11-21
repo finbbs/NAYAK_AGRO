@@ -9,7 +9,7 @@
 <link rel="manifest" href="manifest.json">
 <link rel="icon" href="icon.svg">
 <link rel="apple-touch-icon" href="icon-192.png">
-<title>NAYAK Agro </title>
+<title>NAYAK Agro Ledger</title>
 <style>
 :root{--g:#14532d;--g2:#166534;--gl:#dcfce7;--y:#f59e0b;--r:#dc2626;--b:#2563eb;--bg:#f4f6f3;--tx:#1f2937;--mu:#6b7280;--bd:#e5e7eb}
 *{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
@@ -70,7 +70,7 @@ table{width:100%;border-collapse:collapse;font-size:13px}td,th{padding:7px 4px;b
 
 <div id="login" class="hidden">
   <form class="box" id="loginForm">
-    <div class="brand"><div class="logo">N</div><h1>NAYAK Agro</h1><p> · Harvester &amp; Tractor Accounts</p></div>
+    <div class="brand"><div class="logo">N</div><h1>NAYAK</h1><p>Agro Ledger · Harvester &amp; Tractor Accounts</p></div>
     <label>Username<input name="u" autocomplete="username" required autocapitalize="none"></label>
     <label>Password<input name="p" type="password" autocomplete="current-password" required></label>
     <div class="err" id="loginErr"></div>
@@ -313,7 +313,7 @@ const VIEWS = {
     const top = DB.parties.map(p => ({p, b: bal[p.id]||0})).filter(x => x.b > 0.5).sort((a,b) => b.b - a.b).slice(0,5);
     const mRows = Object.entries(r.byM).sort((a,b) => (b[1].i-b[1].e) - (a[1].i-a[1].e));
     return `<div class="filters">${periodSel()}</div>
-    ${!DB.machines.length ? `<div class="card" style="background:#fef3c7"><b>Welcome to NAYAK Agro  🙏</b><p style="margin:6px 0 10px;font-size:13px">Start by adding your Harvester and Tractor, then record daily income &amp; expenses.</p><button class="btn s" onclick="A.go('machines');A.fab()">+ Add Machine</button></div>` : ''}
+    ${!DB.machines.length ? `<div class="card" style="background:#fef3c7"><b>Welcome to NAYAK Agro Ledger 🙏</b><p style="margin:6px 0 10px;font-size:13px">Start by adding your Harvester and Tractor, then record daily income &amp; expenses.</p><button class="btn s" onclick="A.go('machines');A.fab()">+ Add Machine</button></div>` : ''}
     <div class="grid">
       ${stat('Income (Work Billed)', inr(r.inc), 'inc')}
       ${stat('Expenses + Interest', inr(r.exp + r.int), 'exp')}
@@ -390,7 +390,7 @@ const VIEWS = {
       <button class="tile" onclick="A.go('reports')"><span class="i">📊</span>Reports</button>
       <button class="tile" onclick="A.go('settings')"><span class="i">⚙️</span>Settings &amp; Backup</button>
       <button class="tile" onclick="A.go('parties');A.dueOnly(true)"><span class="i">⏳</span>Pending Dues</button></div>
-      <p style="text-align:center;color:var(--mu);font-size:12px;margin-top:20px">NAYAK Agro  · ${CLOUD?'☁️ Cloud sync (Firestore)':'📱 Local demo mode'}</p>`;
+      <p style="text-align:center;color:var(--mu);font-size:12px;margin-top:20px">NAYAK Agro Ledger · ${CLOUD?'☁️ Cloud sync (Firestore)':'📱 Local demo mode'}</p>`;
   },
 
   machines(){
@@ -401,13 +401,16 @@ const VIEWS = {
   },
 
   leases(){
-    const row = l => { const billed = sum(DB.txns.filter(t => t.leaseId===l.id && t.type==='income'), t => num(t.amount)); const pb = partyBalances()[l.partyId]||0, dh = heldOf('leaseId', l.id);
+    const row = l => { const billed = sum(DB.txns.filter(t => t.leaseId===l.id && t.type==='income'), t => num(t.amount));
+      const ded = sum(DB.txns.filter(t => t.leaseId===l.id && t.type==='expense'), t => num(t.amount) - num(t.paid));
+      const pb = partyBalances()[l.partyId]||0, dh = heldOf('leaseId', l.id);
       return `<div class="card"><div style="display:flex;justify-content:space-between;gap:8px"><div><b>${esc(mName(l.machineId)||'Machine')}</b> → ${esc(pName(l.partyId)||'?')}<div class="s" style="font-size:12px;color:var(--mu)">${fd(l.start)} to ${l.end?fd(l.end):'ongoing'} · ${inr(l.rent)} ${esc(l.basis)}</div></div>
         <span class="tag ${l.status==='Closed'?'r':''}">${esc(l.status||'Active')}</span></div>
-        <div class="grid" style="margin:8px 0">${stat('Rent Billed', inr(billed), 'inc')}${stat('Party Due', inr(pb), pb>0?'pen':'')}${stat('Deposit Held', inr(dh), 'blu')}${stat('Deposit Agreed', inr(l.deposit))}</div>
+        <div class="grid" style="margin:8px 0">${stat('Rent Billed', inr(billed), 'inc')}${stat('Fuel/Cost by Lessee', '− ' + inr(ded), 'exp')}${stat('Lessee Has To Pay', inr(Math.max(0,pb)), pb>0?'pen':'inc')}${stat('Deposit Held', inr(dh), 'blu')}</div>
+        ${pb < -0.5 ? `<div class="exp" style="font-size:13px;margin-bottom:8px">Lessee spent more than rent — you owe them ${inr(-pb)}</div>` : ''}
         ${l.note?`<div style="font-size:13px;color:var(--mu);margin-bottom:8px">${esc(l.note)}</div>`:''}
-        <div class="btns"><button class="btn s" onclick="A.leaseBill('${l.id}')">+ Rent Bill</button><button class="btn s b" onclick="A.newTx('receipt',{partyId:'${l.partyId}'})">💰 Receive</button><button class="btn s o" onclick="A.lease('${l.id}')">Edit</button></div>
-        <div class="btns" style="margin-top:8px"><button class="btn s o" onclick="A.holdNew('leaseId','${l.id}')">📥 + Deposit</button>${dh>0.5?`<button class="btn s o" onclick="A.settle('leaseId','${l.id}')">↩️ Refund / Adjust Deposit</button>`:''}</div></div>`; };
+        <div class="btns"><button class="btn s" onclick="A.leaseBill('${l.id}')">+ Rent Bill</button><button class="btn s r" onclick="A.leaseFuel('${l.id}')">⛽ Fuel by Lessee</button><button class="btn s b" onclick="A.newTx('receipt',{partyId:'${l.partyId}'})">💰 Receive</button></div>
+        <div class="btns" style="margin-top:8px"><button class="btn s o" onclick="A.leaseStmt('${l.id}')">📋 Statement</button><button class="btn s o" onclick="A.holdNew('leaseId','${l.id}')">📥 + Deposit</button>${dh>0.5?`<button class="btn s o" onclick="A.settle('leaseId','${l.id}')">↩️ Deposit</button>`:''}<button class="btn s o" onclick="A.lease('${l.id}')">✏️ Edit</button></div></div>`; };
     const act = DB.leases.filter(l => l.status!=='Closed'), cl = DB.leases.filter(l => l.status==='Closed');
     return sub('📄 Machines on Lease / Rent') + (DB.leases.length ? act.map(row).join('') + (cl.length ? '<h2>Closed</h2>' + cl.map(row).join('') : '') : '<div class="card empty">No lease records. Tap + when you give a machine on rent.</div>');
   },
@@ -781,6 +784,59 @@ function settleForm(key, refId, cancel = false){
   ['refund','adjust','forfeit'].forEach(n => E[n].addEventListener('input', u)); u();
 }
 
+/* ---------- lease: fuel / cost paid by lessee, statement ---------- */
+function leaseFuelForm(lid){
+  const l = DB.leases.find(x => x.id === lid); if (!l) return;
+  const f = openSheet('⛽ Fuel / Cost by Lessee', `
+    <div class="card" style="background:#fef3c7;font-size:13px">${esc(pName(l.partyId))} put fuel or paid a cost for <b>${esc(mName(l.machineId))}</b>.<br>This amount is <b>deducted from the rent</b> they have to pay you.</div>
+    <label>What did they pay for?<select name="category">${opts(['Diesel','Repair & Maintenance','Spare Parts','Driver / Operator Salary','Other Expense'],'Diesel')}</select></label>
+    <label>Date<input type="date" name="date" value="${today()}"></label>
+    <div class="row"><label>Litres<input name="qty" inputmode="decimal"></label><label>Rate / litre ₹<input name="rate" inputmode="decimal"></label></div>
+    <label>Total amount ₹ *<input name="amount" inputmode="decimal" required style="font-size:18px;font-weight:700"></label>
+    <label>Note (pump slip no., hours…)<input name="note"></label>
+    <div id="lfInfo" style="font-size:13px;font-weight:600" class="pen"></div>`,
+  { onSave: d => {
+      const a = num(d.amount); if (a <= 0) return toast('Enter amount'), false;
+      store.add('txns', {type:'expense', category:d.category, machineId:l.machineId, partyId:l.partyId, leaseId:lid, date:d.date, qty:d.qty, rate:d.rate, amount:a, paid:0, mode:'Adjusted',
+        note: ['Paid by lessee – deducted from rent', d.note.trim()].filter(Boolean).join(' · ')});
+    } });
+  const E = f.elements, u = () => {
+    if (E.qty.value && E.rate.value && document.activeElement !== E.amount) E.amount.value = +(num(E.qty.value) * num(E.rate.value)).toFixed(2);
+    const due = (partyBalances()[l.partyId] || 0) - num(E.amount.value);
+    $('#lfInfo').textContent = `After this, lessee has to pay: ${inr(Math.max(0, due))}${due < -0.5 ? ` (you owe them ${inr(-due)})` : ''}`;
+  };
+  ['qty','rate','amount'].forEach(n => E[n].addEventListener('input', u)); E.category.addEventListener('change', () => { const dsl = E.category.value === 'Diesel'; E.qty.closest('.row').classList.toggle('hidden', !dsl); }); u();
+}
+function leaseStatement(lid){
+  const l = DB.leases.find(x => x.id === lid); if (!l) return;
+  const p = party(l.partyId) || {}, from = l.start || '0000';
+  const L = DB.txns.filter(t => (t.leaseId === lid && ['income','expense','adjust'].includes(t.type)) || (t.partyId === l.partyId && t.type === 'receipt' && t.date >= from) || (t.partyId === l.partyId && t.type === 'payment' && t.date >= from)).sort(byDateAsc);
+  let rent = 0, cost = 0, recd = 0, adj = 0;
+  const rows = L.map(t => { const a = num(t.amount);
+    let lbl, v, cls;
+    if (t.type === 'income') { rent += a; recd += num(t.paid); lbl = 'Rent'; v = '+' + inr(a); cls = 'inc'; }
+    else if (t.type === 'expense') { cost += a - num(t.paid); lbl = (t.category === 'Diesel' ? '⛽ Fuel' : t.category) + ' by lessee'; v = '−' + inr(a - num(t.paid)); cls = 'exp'; }
+    else if (t.type === 'adjust') { adj += a; lbl = 'Deposit adjusted'; v = '−' + inr(a); cls = 'exp'; }
+    else if (t.type === 'receipt') { recd += a; lbl = '💰 Received'; v = '−' + inr(a); cls = 'blu'; }
+    else { recd -= a; lbl = 'Paid to lessee'; v = '+' + inr(a); cls = 'pen'; }
+    return `<tr onclick="A.editTx('${t.id}')"><td>${fd(t.date)}</td><td>${esc(lbl)}${t.qty ? `<br><small>${esc(t.qty)} L × ${inr(t.rate)}</small>` : ''}</td><td class="n ${cls}">${v}</td></tr>`; }).join('');
+  const bal = rent - cost - adj - recd;
+  const msg = encodeURIComponent(`NAYAK Agro – Lease Statement\n${mName(l.machineId)} → ${p.name||''}\nFrom ${fd(l.start)}\n\nRent: ₹${Math.round(rent).toLocaleString('en-IN')}\nLess fuel/cost by you: ₹${Math.round(cost).toLocaleString('en-IN')}${adj ? `\nLess deposit adjusted: ₹${Math.round(adj).toLocaleString('en-IN')}` : ''}\nLess received: ₹${Math.round(recd).toLocaleString('en-IN')}\n\n${bal >= 0 ? 'Balance to pay' : 'We owe you'}: ₹${Math.round(Math.abs(bal)).toLocaleString('en-IN')}\nDhanyavad 🙏`);
+  const ph = (p.phone||'').replace(/\D/g,'').slice(-10);
+  openSheet('📋 Lease Statement', `
+    <div style="font-size:13px;color:var(--mu);margin-bottom:8px">${esc(mName(l.machineId))} → <b>${esc(p.name||'')}</b> · from ${fd(l.start)}</div>
+    <div class="card"><table>
+      <tr><td>Total rent</td><td class="n inc">${inr(rent)}</td></tr>
+      <tr><td>Less: fuel / cost paid by lessee</td><td class="n exp">− ${inr(cost)}</td></tr>
+      ${adj ? `<tr><td>Less: deposit adjusted</td><td class="n exp">− ${inr(adj)}</td></tr>` : ''}
+      <tr><td>Less: received from lessee</td><td class="n blu">− ${inr(recd)}</td></tr>
+      <tr><th>${bal >= 0 ? 'Lessee has to pay' : 'You owe lessee'}</th><th class="n big ${bal >= 0 ? 'pen' : 'exp'}" style="font-size:20px">${inr(Math.abs(bal))}</th></tr></table></div>
+    <div class="btns" style="margin-bottom:10px">
+      ${bal > 0.5 ? `<button type="button" class="btn s b" onclick="A.newTx('receipt',{partyId:'${l.partyId}',amount:${Math.round(bal)}})">💰 Receive ${inr(bal)}</button>` : ''}
+      ${ph ? `<a class="btn s" style="background:#25d366;text-decoration:none;text-align:center" href="https://wa.me/91${ph}?text=${msg}" target="_blank">Send on WhatsApp</a>` : ''}</div>
+    <table><tr><th>Date</th><th>Detail</th><th class="n">Amount</th></tr>${rows || '<tr><td colspan="3" class="empty">No entries yet</td></tr>'}</table>`);
+}
+
 /* ---------- loans ---------- */
 function loanForm(id){
   const l = id ? DB.loans.find(x => x.id === id) : {kind:'Bank Loan', date:today(), status:'Open'};
@@ -840,7 +896,7 @@ function exportCSV(){
   const rows = L.map(t => { const ie = t.type==='income'||t.type==='expense'; return [fd(t.date), TYPE_LBL[t.type], t.category, mName(t.machineId), pName(t.partyId), t.qty, t.rate, num(t.amount), num(t.paid), ie ? num(t.amount)-num(t.paid) : 0, t.mode, t.note].map(q).join(','); });
   download(`NAYAK-entries-${S.period}.csv`, '﻿' + [H.join(','), ...rows].join('\n'), 'text/csv');
 }
-function backup(){ download(`NAYAK-backup-${today()}.json`, JSON.stringify({app:'NAYAK Agro ', at:new Date().toISOString(), data:DB}, null, 1), 'application/json'); }
+function backup(){ download(`NAYAK-backup-${today()}.json`, JSON.stringify({app:'NAYAK Agro Ledger', at:new Date().toISOString(), data:DB}, null, 1), 'application/json'); }
 function restore(inp){
   const file = inp.files[0]; if (!file) return;
   const rd = new FileReader();
@@ -903,6 +959,8 @@ window.A = {
   editParty: id => partyForm(id),
   machine: id => machineForm(id),
   lease: id => leaseForm(id),
+  leaseFuel: id => leaseFuelForm(id),
+  leaseStmt: id => leaseStatement(id),
   leaseBill(id){ const l = DB.leases.find(x => x.id === id); txForm(null, {type:'income', category:'Lease Rent', machineId:l.machineId, partyId:l.partyId, leaseId:id, amount:l.rent||'', paid:'0', note:`Lease rent (${l.basis})`}); },
   loan: id => loanView(id),
   editLoan: id => loanForm(id),
