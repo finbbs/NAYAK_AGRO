@@ -933,7 +933,7 @@ function leaseStatement(lid){
       <tr><th>Balance ${bal >= 0 ? 'to pay' : 'we owe'}</th><th class="n">${inr(Math.abs(bal))}</th></tr>
       <tr><td>Security deposit held</td><td class="n blu">− ${inr(held)}</td></tr>
       <tr style="background:${net >= 0 ? '#fef3c7' : '#fee2e2'}"><th>${net >= 0 ? 'Final: lessee has to pay' : 'Final: refund to lessee'}</th><th class="n" style="font-size:20px">${inr(Math.abs(net))}</th></tr></table></div>
-    <div class="btns" style="margin-bottom:8px"><button type="button" class="btn s" onclick="A.ledgerPdf('${lid}')">⬇ Download PDF</button>
+    <div class="btns" style="margin-bottom:8px"><button type="button" class="btn s" onclick="A.ledgerPdf('${lid}')">⬇ Download PDF</button><button type="button" class="btn s b" onclick="A.ledgerPdf('${lid}',1)">📤 Share PDF</button>
       ${ph ? `<a class="btn s" style="background:#25d366;text-decoration:none;text-align:center" href="https://wa.me/91${ph}?text=${msg}" target="_blank">WhatsApp</a>` : ''}</div>
     <div class="btns" style="margin-bottom:10px">
       ${bal > 0.5 ? `<button type="button" class="btn s b" onclick="A.newTx('receipt',{partyId:'${l.partyId}',amount:${Math.round(bal)}})">💰 Receive ${inr(bal)}</button>` : ''}
@@ -941,30 +941,70 @@ function leaseStatement(lid){
     <table><tr><th>Date</th><th>Detail</th><th class="n">Amount</th></tr>
     ${[...rows].reverse().map(r => `<tr onclick="A.editTx('${r.t.id}')"><td>${fd(r.date)}</td><td>${esc(r.det)}${r.note ? `<br><small>${esc(r.note)}</small>` : ''}</td><td class="n ${r.rent ? 'inc' : r.ded ? 'exp' : 'blu'}">${r.rent ? '+' + inr(r.rent) : '−' + inr(r.ded || r.rec)}${r.rent && r.rec ? `<br><small class="blu">recd ${inr(r.rec)}</small>` : ''}</td></tr>`).join('') || '<tr><td colspan="3" class="empty">No entries yet</td></tr>'}</table>`);
 }
-function ledgerPdf(lid){
-  const D = leaseLedgerData(lid); if (!D) return;
-  const {l, p, rows, S, bal, held, net, depIn, depOut, depKept} = D, r = v => v ? inr(v) : '';
-  const html = `<div class="pl">
-    <div class="ph"><div><div class="pt">NAYAK AGRO</div><div>Harvester · Tractor · Lease</div></div><div style="text-align:right"><b>LEASE LEDGER</b><br>Date: ${fd(today())}</div></div>
-    <table class="pi"><tr><td><b>Lessee:</b> ${esc(p.name||'')}${p.phone ? ' · ' + esc(p.phone) : ''}${p.village ? '<br>' + esc(p.village) : ''}</td>
-      <td><b>Machine:</b> ${esc(mName(l.machineId))}<br><b>Rate:</b> ${inr(l.rent)} ${esc(l.basis)}<br><b>Period:</b> ${fd(l.start)} to ${l.end ? fd(l.end) : fd(today())}</td></tr></table>
-    <h3>Summary</h3>
-    <table class="ps">
-      <tr><td>Total working time</td><td>${minsTxt(S.mins)}</td></tr>
-      <tr><td>Total rent</td><td>${inr(S.rent)}</td></tr>
-      <tr><td>Less: fuel put by lessee${S.fuelL ? ` (${S.fuelL} litres)` : ''}</td><td>− ${inr(S.fuel)}</td></tr>
-      <tr><td>Less: other costs paid by lessee</td><td>− ${inr(S.other)}</td></tr>
-      ${S.adj ? `<tr><td>Less: security deposit already adjusted</td><td>− ${inr(S.adj)}</td></tr>` : ''}
-      <tr><td>Less: payments received</td><td>− ${inr(S.recd)}</td></tr>
-      <tr class="b"><td>Balance ${bal >= 0 ? 'payable by lessee' : 'payable to lessee'}</td><td>${inr(Math.abs(bal))}</td></tr>
-      <tr><td>Security deposit: received ${inr(depIn)}${depOut ? ` · refunded ${inr(depOut)}` : ''}${S.adj ? ` · adjusted ${inr(S.adj)}` : ''}${depKept ? ` · kept ${inr(depKept)}` : ''} → <b>held</b></td><td>− ${inr(held)}</td></tr>
-      <tr class="f"><td>${net >= 0 ? 'FINAL AMOUNT PAYABLE BY LESSEE (after adjusting deposit)' : 'FINAL AMOUNT REFUNDABLE TO LESSEE (after adjusting deposit)'}</td><td>${inr(Math.abs(net))}</td></tr></table>
-    <h3>Details</h3>
-    <table class="pd"><tr><th>Date</th><th>Particulars</th><th>Time (min)</th><th>Rent</th><th>Deduction</th><th>Received</th><th>Balance</th></tr>
-    ${rows.map(x => `<tr><td>${fd(x.date)}</td><td>${esc(x.det)}${x.note ? '<br><small>' + esc(x.note) + '</small>' : ''}</td><td>${txMins(x.t) && x.t.type === 'income' ? txMins(x.t) : ''}</td><td>${r(x.rent)}</td><td>${r(x.ded)}</td><td>${r(x.rec)}</td><td>${inr(x.run)}</td></tr>`).join('')}
-    <tr class="b"><td></td><td>Total</td><td>${Math.round(S.mins)}</td><td>${inr(S.rent)}</td><td>${inr(S.fuel + S.other + S.adj)}</td><td>${inr(S.recd)}</td><td>${inr(bal)}</td></tr></table>
-    <div class="sg"><div>Lessee signature</div><div>For NAYAK AGRO</div></div></div>`;
-  printHtml(html, `NAYAK-Lease-Ledger-${(p.name||'lessee').replace(/\s+/g,'-')}-${today()}`);
+/* ---------- real PDF file (jsPDF) — download or share to WhatsApp ---------- */
+const PDF_LIBS = ['https://cdn.jsdelivr.net/npm/jspdf@2.5.1/dist/jspdf.umd.min.js', 'https://cdn.jsdelivr.net/npm/jspdf-autotable@3.8.2/dist/jspdf.plugin.autotable.min.js'];
+const loadScript = src => new Promise((res, rej) => { const s = document.createElement('script'); s.src = src; s.onload = res; s.onerror = () => rej(new Error('Could not load PDF tool – check internet')); document.head.appendChild(s); });
+async function pdfLib(){ if (!(window.jspdf && window.jspdf.jsPDF && window.jspdf.jsPDF.API.autoTable)) { for (const u of PDF_LIBS) await loadScript(u); } return window.jspdf.jsPDF; }
+const rs = n => (n < 0 ? '- ' : '') + 'Rs ' + Math.round(Math.abs(+n || 0)).toLocaleString('en-IN');
+const pt = v => String(v ?? '').replace(/₹\s?/g, 'Rs ').replace(/→/g, '->').replace(/[–—]/g, '-').replace(/[^\x20-\x7E\n]/g, '');
+async function ledgerPdfDoc(lid){
+  const D = leaseLedgerData(lid); if (!D) return null;
+  const {l, p, rows, S, bal, held, net, depIn, depOut, depKept} = D;
+  const jsPDF = await pdfLib(), doc = new jsPDF({unit:'mm', format:'a4'}), W = doc.internal.pageSize.getWidth(), G = [20,83,45];
+  doc.setTextColor(...G); doc.setFont('helvetica','bold'); doc.setFontSize(22); doc.text('NAYAK AGRO', 14, 18);
+  doc.setFontSize(9); doc.setFont('helvetica','normal'); doc.setTextColor(90); doc.text('Harvester  .  Tractor  .  Lease', 14, 23);
+  doc.setTextColor(0); doc.setFont('helvetica','bold'); doc.setFontSize(12); doc.text('LEASE LEDGER', W-14, 17, {align:'right'});
+  doc.setFont('helvetica','normal'); doc.setFontSize(9); doc.text('Date: ' + fd(today()), W-14, 23, {align:'right'});
+  doc.setDrawColor(...G); doc.setLineWidth(0.8); doc.line(14, 26, W-14, 26);
+  doc.setFontSize(10);
+  doc.setFont('helvetica','bold'); doc.text('Lessee:', 14, 33); doc.setFont('helvetica','normal'); doc.text(pt(p.name||''), 30, 33);
+  if (p.phone) doc.text('Ph: ' + pt(p.phone), 14, 38); if (p.village) doc.text(pt(p.village), 14, 43);
+  const x2 = W/2 + 5;
+  doc.setFont('helvetica','bold'); doc.text('Machine:', x2, 33); doc.setFont('helvetica','normal'); doc.text(pt(mName(l.machineId)), x2+18, 33);
+  doc.setFont('helvetica','bold'); doc.text('Rate:', x2, 38); doc.setFont('helvetica','normal'); doc.text(`${rs(l.rent)} ${pt(l.basis)}`, x2+18, 38);
+  doc.setFont('helvetica','bold'); doc.text('Period:', x2, 43); doc.setFont('helvetica','normal'); doc.text(`${fd(l.start)} to ${l.end ? fd(l.end) : fd(today())}`, x2+18, 43);
+  const sumRows = [
+    ['Total working time', `${hm(S.mins)}  (${Math.round(S.mins)} min)`],
+    ['Total rent', rs(S.rent)],
+    [`Less: fuel put by lessee${S.fuelL ? ` (${S.fuelL} litres)` : ''}`, '- ' + rs(S.fuel)],
+    ['Less: other costs paid by lessee', '- ' + rs(S.other)],
+    ...(S.adj ? [['Less: security deposit already adjusted', '- ' + rs(S.adj)]] : []),
+    ['Less: payments received', '- ' + rs(S.recd)],
+    [`Balance ${bal >= 0 ? 'payable by lessee' : 'payable to lessee'}`, rs(Math.abs(bal))],
+    [`Security deposit held  (received ${rs(depIn)}${depOut ? `, refunded ${rs(depOut)}` : ''}${S.adj ? `, adjusted ${rs(S.adj)}` : ''}${depKept ? `, kept ${rs(depKept)}` : ''})`, '- ' + rs(held)],
+    [net >= 0 ? 'FINAL AMOUNT PAYABLE BY LESSEE' : 'FINAL AMOUNT REFUNDABLE TO LESSEE', rs(Math.abs(net))]];
+  doc.setFont('helvetica','bold'); doc.setTextColor(...G); doc.setFontSize(12); doc.text('Summary', 14, 52); doc.setTextColor(0);
+  doc.autoTable({startY: 54, body: sumRows, theme: 'grid', styles: {fontSize: 10, cellPadding: 2.2}, columnStyles: {1: {halign: 'right', cellWidth: 55}},
+    didParseCell: d => { const last = sumRows.length - 1; if (d.row.index === last) { d.cell.styles.fontStyle = 'bold'; d.cell.styles.fontSize = 12; d.cell.styles.fillColor = [254,243,199]; }
+      if (d.row.index === last - 2 || d.row.index === 0) { d.cell.styles.fontStyle = 'bold'; d.cell.styles.fillColor = [241,245,249]; } }});
+  let y = doc.lastAutoTable.finalY + 8;
+  doc.setFont('helvetica','bold'); doc.setTextColor(...G); doc.setFontSize(12); doc.text('Details', 14, y); doc.setTextColor(0);
+  const r0 = v => v ? rs(v) : '';
+  doc.autoTable({startY: y + 2, theme: 'grid', headStyles: {fillColor: G, fontSize: 9}, styles: {fontSize: 8.5, cellPadding: 1.8},
+    head: [['Date','Particulars','Min','Rent','Deduction','Received','Balance']],
+    body: rows.map(x => [fd(x.date), pt(x.det) + (x.note ? '\n' + pt(x.note) : ''), x.t.type === 'income' && txMins(x.t) ? txMins(x.t) : '', r0(x.rent), r0(x.ded), r0(x.rec), rs(x.run)]),
+    foot: [['', 'TOTAL', Math.round(S.mins), rs(S.rent), rs(S.fuel + S.other + S.adj), rs(S.recd), rs(bal)]],
+    footStyles: {fillColor: [241,245,249], textColor: 0, fontStyle: 'bold', fontSize: 9},
+    columnStyles: {0: {cellWidth: 20}, 2: {halign: 'right', cellWidth: 12}, 3: {halign: 'right'}, 4: {halign: 'right'}, 5: {halign: 'right'}, 6: {halign: 'right'}}});
+  y = doc.lastAutoTable.finalY + 28; if (y > doc.internal.pageSize.getHeight() - 15) { doc.addPage(); y = 40; }
+  doc.setFontSize(10); doc.setLineWidth(0.3); doc.setDrawColor(0);
+  doc.line(14, y, 74, y); doc.text('Lessee signature', 44, y + 5, {align:'center'});
+  doc.line(W-74, y, W-14, y); doc.text('For NAYAK AGRO', W-44, y + 5, {align:'center'});
+  const pages = doc.getNumberOfPages();
+  for (let i = 1; i <= pages; i++) { doc.setPage(i); doc.setFontSize(8); doc.setTextColor(120); doc.text(`Page ${i} of ${pages}`, W-14, doc.internal.pageSize.getHeight() - 8, {align:'right'}); }
+  return {doc, name: `NAYAK-Lease-Ledger-${pt(p.name||'lessee').trim().replace(/\s+/g,'-')}-${today()}.pdf`, title: `Lease Ledger - ${pt(p.name||'')}`};
+}
+async function ledgerPdf(lid, share){
+  toast('Making PDF…', 1500);
+  try {
+    const R = await ledgerPdfDoc(lid); if (!R) return;
+    if (share) {
+      const file = new File([R.doc.output('blob')], R.name, {type: 'application/pdf'});
+      if (navigator.canShare && navigator.canShare({files: [file]})) { await navigator.share({files: [file], title: R.title}); return; }
+      toast('Sharing not supported here — downloading instead', 2500);
+    }
+    R.doc.save(R.name); toast('PDF saved to Downloads ✓', 2500);
+  } catch (e) { if (e.name !== 'AbortError') alert(e.message); }
 }
 function printHtml(html, title){
   let pa = $('#printArea'); if (!pa) { pa = document.createElement('div'); pa.id = 'printArea'; document.body.appendChild(pa); }
@@ -1154,7 +1194,7 @@ window.A = {
   lease: id => leaseForm(id),
   leaseFuel: id => leaseFuelForm(id),
   leaseStmt: id => leaseStatement(id),
-  ledgerPdf: id => ledgerPdf(id),
+  ledgerPdf: (id, sh) => ledgerPdf(id, !!sh),
   leaseBill(id){ const l = DB.leases.find(x => x.id === id); if (TIME_BASIS.includes(l.basis)) return leaseTimeBill(id); txForm(null, {type:'income', category:'Lease Rent', machineId:l.machineId, partyId:l.partyId, leaseId:id, amount:l.rent||'', paid:'0', note:`Lease rent (${l.basis})`}); },
   loan: id => loanView(id),
   editLoan: id => loanForm(id),
