@@ -235,7 +235,7 @@ function heldTotals(){ let adv = 0, dep = 0; DB.txns.forEach(t => { if (!HOLD.in
 /* ---------- Cash & Bank, Net Worth ---------- */
 const isBank = m => !!m && m !== 'Cash' && m !== 'Adjusted';      // UPI / Bank / Cheque = bank account
 const opening = () => DB.meta.find(x => x.id === 'opening') || {};
-const loanMode = l => l.mode || (l.kind === 'Bank Loan' || l.kind === 'Machine Finance' ? 'Bank' : 'Cash');
+const loanMode = l => l.mode || 'Paid to dealer directly';   // old loans (saved before this option) = used for machine, not cash
 function moneyBal(upto){   // cash & bank balance at end of date "upto" (or today)
   const o = opening(), from = o.asOf || '0000-00-00', end = upto || '9999-12-31';
   let cash = 0, bank = 0; if (from <= end) { cash = num(o.cash); bank = num(o.bank); }
