@@ -302,10 +302,21 @@ function txRow(t){
     <div class="mid"><div class="t">${esc(title)}</div><div class="s">${esc(meta)}${t.note?`<br>${esc(t.note)}`:''}</div></div>
     <div class="amt ${neutral?'':plus?'inc':'exp'}">${neutral?'':plus?'+':'−'}${inr(a)}${due>0.5?`<small class="pen">${t.type==='income'?'Due':'To pay'} ${inr(due)}</small>`:''}</div></div>`;
 }
+/* time worked in minutes — also works for old entries saved before minutes were stored */
+function txUnit(t){ if (t.unit) return t.unit; const l = t.leaseId && DB.leases.find(x => x.id === t.leaseId); return l && l.basis === 'Per Minute' ? 'min' : 'hr'; }
+function txMins(t){
+  if (num(t.mins) > 0) return num(t.mins);
+  if (t.type !== 'income') return 0;
+  const m = /(\d+)\s*h\s*(\d+)\s*m/.exec(t.note || ''); if (m) return +m[1] * 60 + +m[2];
+  const mm = /^(\d+)\s*min/.exec(t.note || ''); if (mm) return +mm[1];
+  const l = t.leaseId && DB.leases.find(x => x.id === t.leaseId);
+  if (l && num(t.qty) > 0) { if (l.basis === 'Per Minute') return Math.round(num(t.qty)); if (l.basis === 'Per Hour') return Math.round(num(t.qty) * 60); }
+  return 0;
+}
 /* "2h 30m × ₹2,400/hr" when time was entered, else "5 × ₹2,500" */
 const hm = mins => `${Math.floor(mins/60)}h ${Math.round(mins%60)}m`;
 function qtyText(t){
-  if (num(t.mins) > 0) return `${hm(num(t.mins))} × ${inr(t.rate)}/${t.unit === 'min' ? 'min' : 'hr'}`;
+  if (txMins(t) > 0) return `${hm(txMins(t))} × ${inr(t.rate)}/${txUnit(t) === 'min' ? 'min' : 'hr'}`;
   if (t.qty) return `${t.qty}${t.category === 'Diesel' ? ' L' : ''} × ${inr(t.rate)}`;
   return '';
 }
@@ -486,7 +497,7 @@ const VIEWS = {
 /* ---------- bottom sheet ---------- */
 function closeSheet(){ const s = $('#sheetBg'); if (s) s.remove(); }
 function openSheet(title, body, {onSave, onDelete, saveText='Save'} = {}){
-  closeSheet();
+  const wasOpen = !!$('#sheetBg'); closeSheet(); if (!wasOpen) pushNav();
   const bg = document.createElement('div'); bg.className = 'sheet-bg'; bg.id = 'sheetBg';
   bg.innerHTML = `<div class="sheet"><div class="hd"><h3>${esc(title)}</h3><button class="x" type="button" onclick="A.close()">✕</button></div>
     <form id="sf" autocomplete="off" novalidate>${body}${onSave ? `<div class="btns" style="margin-top:12px"><button class="btn">${saveText}</button>${onDelete ? '<button type="button" class="btn r" id="sfDel" style="flex:0 0 auto">🗑 Delete</button>' : ''}</div>` : ''}</form></div>`;
@@ -584,7 +595,7 @@ function txForm(id, preset = {}){
     <div id="partyDue" style="font-size:12px;margin:-4px 0 8px"></div>
     <div class="ie"><label>Machine<select name="machineId">${machineOpts(t.machineId)}</select></label>
       <label>Category<select name="category"></select></label>
-      <div class="row" style="align-items:flex-end"><label>⏱ Time: Hours<input name="th" inputmode="numeric" placeholder="hr" value="${num(t.mins) ? Math.floor(num(t.mins)/60) : ''}"></label><label>Minutes<input name="tm" inputmode="numeric" placeholder="min" value="${num(t.mins) ? Math.round(num(t.mins)%60) : ''}"></label></div>
+      <div class="row" style="align-items:flex-end"><label>⏱ Time: Hours<input name="th" inputmode="numeric" placeholder="hr" value="${txMins(t) ? Math.floor(txMins(t)/60) : ''}"></label><label>Minutes<input name="tm" inputmode="numeric" placeholder="min" value="${txMins(t) ? Math.round(txMins(t)%60) : ''}"></label></div>
       <div class="row"><label>Qty (hr / acre / trip)<input name="qty" inputmode="decimal" value="${esc(t.qty||'')}"></label><label>Rate ₹<input name="rate" inputmode="decimal" value="${esc(t.rate||'')}"></label></div>
       <div id="timeInfo" style="font-size:12px;color:var(--mu);margin:-4px 0 8px">Per-hour work: fill Hours + Minutes, Qty fills itself</div></div>
     <label>Total Amount ₹<input name="amount" inputmode="decimal" required value="${esc(t.amount ?? '')}" style="font-size:18px;font-weight:700"></label>
@@ -628,11 +639,11 @@ function txForm(id, preset = {}){
   f.querySelectorAll('#tseg button').forEach(b => b.onclick = () => setType(b.dataset.v));
   ['qty','rate','amount','paid','partyId'].forEach(n => E[n].addEventListener('input', upd));
   const tUpd = () => { const mins = num(E.th.value) * 60 + num(E.tm.value); if (!mins) return;
-    const pm = t.unit === 'min'; E.qty.value = pm ? Math.round(mins) : +(mins / 60).toFixed(2);
+    const pm = txUnit(t) === 'min'; E.qty.value = pm ? Math.round(mins) : +(mins / 60).toFixed(2);
     $('#timeInfo').textContent = `${hm(mins)} = ${E.qty.value} ${pm ? 'min' : 'hours'}`; upd(); };
   E.th.addEventListener('input', tUpd); E.tm.addEventListener('input', tUpd);
   E.qty.addEventListener('input', () => { if (E.th.value || E.tm.value) { E.th.value = ''; E.tm.value = ''; $('#timeInfo').textContent = 'Time cleared (qty typed manually)'; } });
-  if (num(t.mins)) $('#timeInfo').textContent = `${hm(num(t.mins))} = ${t.qty} ${t.unit === 'min' ? 'min' : 'hours'}`;
+  if (txMins(t)) $('#timeInfo').textContent = `${hm(txMins(t))} = ${t.qty} ${txUnit(t) === 'min' ? 'min' : 'hours'}`;
   E.partyId.addEventListener('change', () => {   // pending mode: fill full due automatically
     upd(); if (!pend || id || E.amount.value) return;
     const b = partyBalances()[E.partyId.value] || 0, ty = E.type.value;
@@ -890,7 +901,7 @@ function leaseLedgerData(lid){
   let run = 0;
   const rows = L.map(t => {
     const a = num(t.amount), pd = num(t.paid); let rent = 0, ded = 0, rec = 0, det;
-    if (t.type === 'income') { rent = a; rec = pd; S.rent += a; S.recd += pd; S.mins += num(t.mins); det = 'Rent' + (num(t.mins) ? ` · ${num(t.mins)} min` : '') + (t.rate ? ` @ ${inr(t.rate)}/${t.unit === 'min' ? 'min' : 'hr'}` : ''); }
+    if (t.type === 'income') { rent = a; rec = pd; S.rent += a; S.recd += pd; S.mins += txMins(t); det = 'Rent' + (txMins(t) ? ` · ${txMins(t)} min` : '') + (t.rate ? ` @ ${inr(t.rate)}/${txUnit(t) === 'min' ? 'min' : 'hr'}` : ''); }
     else if (t.type === 'expense') { ded = a - pd; if (t.category === 'Diesel') { S.fuel += ded; S.fuelL += num(t.qty); det = `Fuel by lessee${t.qty ? ` · ${t.qty} L @ ${inr(t.rate)}` : ''}`; } else { S.other += ded; det = `${t.category} by lessee`; } }
     else if (t.type === 'adjust') { ded = a; S.adj += a; det = 'Security deposit adjusted'; }
     else if (t.type === 'receipt') { rec = a; S.recd += a; det = `Payment received (${t.mode || 'Cash'})`; }
@@ -950,7 +961,7 @@ function ledgerPdf(lid){
       <tr class="f"><td>${net >= 0 ? 'FINAL AMOUNT PAYABLE BY LESSEE (after adjusting deposit)' : 'FINAL AMOUNT REFUNDABLE TO LESSEE (after adjusting deposit)'}</td><td>${inr(Math.abs(net))}</td></tr></table>
     <h3>Details</h3>
     <table class="pd"><tr><th>Date</th><th>Particulars</th><th>Time (min)</th><th>Rent</th><th>Deduction</th><th>Received</th><th>Balance</th></tr>
-    ${rows.map(x => `<tr><td>${fd(x.date)}</td><td>${esc(x.det)}${x.note ? '<br><small>' + esc(x.note) + '</small>' : ''}</td><td>${num(x.t.mins) && x.t.type === 'income' ? num(x.t.mins) : ''}</td><td>${r(x.rent)}</td><td>${r(x.ded)}</td><td>${r(x.rec)}</td><td>${inr(x.run)}</td></tr>`).join('')}
+    ${rows.map(x => `<tr><td>${fd(x.date)}</td><td>${esc(x.det)}${x.note ? '<br><small>' + esc(x.note) + '</small>' : ''}</td><td>${txMins(x.t) && x.t.type === 'income' ? txMins(x.t) : ''}</td><td>${r(x.rent)}</td><td>${r(x.ded)}</td><td>${r(x.rec)}</td><td>${inr(x.run)}</td></tr>`).join('')}
     <tr class="b"><td></td><td>Total</td><td>${Math.round(S.mins)}</td><td>${inr(S.rent)}</td><td>${inr(S.fuel + S.other + S.adj)}</td><td>${inr(S.recd)}</td><td>${inr(bal)}</td></tr></table>
     <div class="sg"><div>Lessee signature</div><div>For NAYAK AGRO</div></div></div>`;
   printHtml(html, `NAYAK-Lease-Ledger-${(p.name||'lessee').replace(/\s+/g,'-')}-${today()}`);
@@ -1056,7 +1067,7 @@ function exportCSV(){
   const L = DB.txns.filter(t => inRange(t.date, S.period)).sort(byDateAsc);
   const H = ['Date','Type','Category','Machine','Party','Time (h:m)','Qty','Rate','Amount','Paid/Received','Pending','Mode','Note'];
   const q = v => `"${String(v ?? '').replace(/"/g,'""')}"`;
-  const rows = L.map(t => { const ie = t.type==='income'||t.type==='expense'; return [fd(t.date), TYPE_LBL[t.type], t.category, mName(t.machineId), pName(t.partyId), num(t.mins) ? hm(num(t.mins)) : '', t.qty, t.rate, num(t.amount), num(t.paid), ie ? num(t.amount)-num(t.paid) : 0, t.mode, t.note].map(q).join(','); });
+  const rows = L.map(t => { const ie = t.type==='income'||t.type==='expense'; return [fd(t.date), TYPE_LBL[t.type], t.category, mName(t.machineId), pName(t.partyId), txMins(t) ? hm(txMins(t)) : '', t.qty, t.rate, num(t.amount), num(t.paid), ie ? num(t.amount)-num(t.paid) : 0, t.mode, t.note].map(q).join(','); });
   download(`NAYAK-entries-${S.period}.csv`, '﻿' + [H.join(','), ...rows].join('\n'), 'text/csv');
 }
 function backup(){ download(`NAYAK-backup-${today()}.json`, JSON.stringify({app:'NAYAK Agro Ledger', at:new Date().toISOString(), data:DB}, null, 1), 'application/json'); }
@@ -1079,7 +1090,7 @@ function restore(inp){
 const LCRED = 'nayak_cred', LSESS = 'nayak_session';
 const localCred = () => { try { return JSON.parse(localStorage.getItem(LCRED)) || {u:'admin', p:'nayak@123'}; } catch(e) { return {u:'admin', p:'nayak@123'}; } };
 function showLogin(){ closeSheet(); $('#app').classList.add('hidden'); $('#login').classList.remove('hidden'); $('#loginHint').textContent = CLOUD ? 'Login ID: Admin · stays logged in on this phone' : 'Local demo login: admin / nayak@123'; }
-function showApp(){ $('#login').classList.add('hidden'); $('#app').classList.remove('hidden'); store.start(); render(); }
+function showApp(){ $('#login').classList.add('hidden'); $('#app').classList.remove('hidden'); store.start(); render(); armBack(); }
 $('#loginForm').addEventListener('submit', async e => {
   e.preventDefault();
   const u = e.target.u.value.trim().toLowerCase(), p = e.target.p.value; $('#loginErr').textContent = '';
@@ -1099,9 +1110,26 @@ const net = () => { const n = $('#net'); if (n) n.textContent = !CLOUD ? '📱 L
 addEventListener('online', net); addEventListener('offline', net); net();
 if ('serviceWorker' in navigator && location.protocol.startsWith('http')) navigator.serviceWorker.register('sw.js').catch(()=>{});
 
+
+/* ---------- Android back button: close popup → go back → press twice to exit ---------- */
+var guarded, exitArm, inPop;   // no initial values: showApp()/armBack() may run before this line
+function pushNav(){ if (guarded && !inPop) history.pushState({nayak: Date.now()}, ''); }   // called on taps → Chrome keeps the entry
+function armBack(){ if (guarded) return; guarded = true; addEventListener('pointerdown', () => pushNav(), {once: true, capture: true}); }
+addEventListener('popstate', () => {
+  if (!guarded || $('#app').classList.contains('hidden')) return;
+  inPop = true;
+  try {
+    if (document.body.classList.contains('printing')) document.body.classList.remove('printing');
+    else if ($('#sheetBg')) closeSheet();
+    else if (S.tab !== 'home') { S.tab = ['machines','reports','settings','bookings','loans'].includes(S.tab) ? 'more' : 'home'; scrollTo(0,0); render(); }
+    else if (Date.now() - (exitArm || 0) < 2500) { inPop = false; history.back(); return; }
+    else { exitArm = Date.now(); toast('Press back again to exit'); inPop = false; pushNav(); }
+  } finally { inPop = false; }
+});
+
 /* ---------- public actions ---------- */
 window.A = {
-  go(t){ S.tab = t; closeSheet(); scrollTo(0,0); render(); },
+  go(t){ if (t !== S.tab && t !== 'home') pushNav(); S.tab = t; closeSheet(); scrollTo(0,0); render(); },
   setPer(p){ S.period = p; render(); },
   bf(k, v){ S.bf[k] = v; render(); },
   bookParty(id){ S.bf = {type:'', machine:'', party:id, q:''}; S.period = 'all'; A.go('book'); },
