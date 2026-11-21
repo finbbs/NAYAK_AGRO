@@ -125,12 +125,13 @@ const CLOUD = !!FIREBASE_CONFIG.apiKey;
 const SDK = "https://www.gstatic.com/firebasejs/10.12.2/";
 
 /* ---------- constants ---------- */
-const COLS = ['machines','parties','txns','loans','loanPays','leases','bookings'];
+const COLS = ['machines','parties','txns','loans','loanPays','leases','bookings','meta'];
 const MAIN_TYPES = ['income','expense','receipt','payment'];
 const HOLD = ['advance','refund','adjust','forfeit'];   // advance (booking) / security deposit (lease) movements
-const TYPE_LBL = {income:'Income',expense:'Expense',receipt:'Received',payment:'Paid Out',advance:'Advance Received',refund:'Advance Refunded',adjust:'Advance Adjusted',forfeit:'Advance Kept'};
-const ICON = {income:'🌾',expense:'⛽',receipt:'💰',payment:'💸',advance:'📥',refund:'↩️',adjust:'🔁',forfeit:'📌'};
-const TBG = {income:'#dcfce7',expense:'#fee2e2',receipt:'#dbeafe',payment:'#fef3c7',advance:'#e0e7ff',refund:'#fce7f3',adjust:'#f1f5f9',forfeit:'#dcfce7'};
+const OWN = ['drawing','capital','transfer'];   // own money: personal use, money added, cash<->bank
+const TYPE_LBL = {drawing:'Personal / Family Use',capital:'Own Money Added',transfer:'Cash ↔ Bank',income:'Income',expense:'Expense',receipt:'Received',payment:'Paid Out',advance:'Advance Received',refund:'Advance Refunded',adjust:'Advance Adjusted',forfeit:'Advance Kept'};
+const ICON = {drawing:'🏠',capital:'💼',transfer:'🔄',income:'🌾',expense:'⛽',receipt:'💰',payment:'💸',advance:'📥',refund:'↩️',adjust:'🔁',forfeit:'📌'};
+const TBG = {drawing:'#fce7f3',capital:'#dcfce7',transfer:'#f1f5f9',income:'#dcfce7',expense:'#fee2e2',receipt:'#dbeafe',payment:'#fef3c7',advance:'#e0e7ff',refund:'#fce7f3',adjust:'#f1f5f9',forfeit:'#dcfce7'};
 const holdLbl = t => t.leaseId ? TYPE_LBL[t.type].replace('Advance','Deposit') : TYPE_LBL[t.type];
 const BOOK_UNITS = ['Hour','Minute','Acre','Day','Trip','Season'];
 const CATS = {
@@ -231,6 +232,42 @@ function txPartyEffect(t){
 const holdVal = t => t.type === 'advance' ? num(t.amount) : -num(t.amount);
 const heldOf = (key, id) => sum(DB.txns.filter(t => t[key] === id && HOLD.includes(t.type)), holdVal);
 function heldTotals(){ let adv = 0, dep = 0; DB.txns.forEach(t => { if (!HOLD.includes(t.type)) return; if (t.leaseId) dep += holdVal(t); else adv += holdVal(t); }); return {adv, dep}; }
+/* ---------- Cash & Bank, Net Worth ---------- */
+const isBank = m => !!m && m !== 'Cash' && m !== 'Adjusted';      // UPI / Bank / Cheque = bank account
+const opening = () => DB.meta.find(x => x.id === 'opening') || {};
+const loanMode = l => l.mode || (l.kind === 'Bank Loan' || l.kind === 'Machine Finance' ? 'Bank' : 'Cash');
+function moneyBal(upto){   // cash & bank balance at end of date "upto" (or today)
+  const o = opening(), from = o.asOf || '0000-00-00', end = upto || '9999-12-31';
+  let cash = 0, bank = 0; if (from <= end) { cash = num(o.cash); bank = num(o.bank); }
+  const ok = d => (d || '') >= from && (d || '') <= end;
+  const add = (mode, v) => { if (mode === 'Adjusted' || !v) return; if (isBank(mode)) bank += v; else cash += v; };
+  for (const t of DB.txns) { if (!ok(t.date)) continue; const a = num(t.amount), pd = num(t.paid);
+    if (t.type === 'income') add(t.mode, pd); else if (t.type === 'expense') add(t.mode, -pd);
+    else if (['receipt','advance','capital'].includes(t.type)) add(t.mode, a);
+    else if (['payment','refund','drawing'].includes(t.type)) add(t.mode, -a);
+    else if (t.type === 'transfer') { if (t.dir === 'toCash') { bank -= a; cash += a; } else { cash -= a; bank += a; } } }
+  for (const l of DB.loans) if (ok(l.date) && loanMode(l) !== 'Paid to dealer directly') add(loanMode(l), num(l.principal));
+  for (const p of DB.loanPays) if (ok(p.date)) add(p.mode, -num(p.amount));
+  return {cash, bank, total: cash + bank};
+}
+function netWorth(){
+  const m = moneyBal(), bal = partyBalances(); let rec = 0, pay = 0; Object.values(bal).forEach(v => v > 0 ? rec += v : pay -= v);
+  const mach = sum(DB.machines, x => num(x.value) || num(x.cost)), loans = sum(DB.loans, l => loanStats(l).out), H = heldTotals();
+  const assets = m.total + rec + mach, liab = loans + pay + H.adv + H.dep;
+  return {...m, rec, pay, mach, loans, adv: H.adv, dep: H.dep, assets, liab, net: assets - liab};
+}
+function profitUse(p){   // where did the period's profit go
+  const [a, b] = range(p), inP = d => (d||'') >= a && (d||'') <= b, r = summ(p);
+  const draw = sum(DB.txns.filter(t => t.type === 'drawing' && inP(t.date)), t => num(t.amount));
+  const cap = sum(DB.txns.filter(t => t.type === 'capital' && inP(t.date)), t => num(t.amount));
+  const prin = sum(DB.loanPays.filter(x => inP(x.date)), x => num(x.principal));
+  const before = new Date(a); before.setDate(before.getDate() - 1);
+  const o = opening(), ob = num(o.cash) + num(o.bank), dayB = before.toISOString().slice(0,10);
+  const startBal = p === 'all' ? ob : dayB >= (o.asOf || '0000-00-00') ? moneyBal(dayB).total : (o.asOf && o.asOf <= b ? ob : 0);
+  const endBal = moneyBal(b > today() ? today() : b).total;
+  const change = endBal - startBal, other = change - (r.profit + cap + r.loanIn - prin - draw);
+  return {profit: r.profit, draw, cap, prin, loanIn: r.loanIn, change, other, startBal, endBal};
+}
 const partyHeld = pid => sum(DB.txns.filter(t => t.partyId === pid && HOLD.includes(t.type)), holdVal);
 function bookingConflicts(b, selfId){
   const a = b.from, z = b.to || b.from, out = [];
@@ -295,8 +332,8 @@ const sub = (title) => `<button class="back noprint" onclick="A.go('more')">‹ 
 
 function txRow(t){
   const a = num(t.amount), due = (t.type==='income'||t.type==='expense') ? a - num(t.paid === '' ? a : t.paid) : 0;
-  const plus = ['income','receipt','advance','forfeit'].includes(t.type), neutral = t.type === 'adjust';
-  const title = HOLD.includes(t.type) ? `${holdLbl(t)} — ${pName(t.partyId)||'?'}` : (t.type==='receipt'||t.type==='payment') ? `${TYPE_LBL[t.type]} — ${pName(t.partyId)||'?'}` : (t.category || TYPE_LBL[t.type]);
+  const plus = ['income','receipt','advance','forfeit','capital'].includes(t.type), neutral = t.type === 'adjust' || t.type === 'transfer';
+  const title = OWN.includes(t.type) ? (t.type === 'transfer' ? (t.dir === 'toCash' ? '🔄 Bank → Cash (withdrawal)' : '🔄 Cash → Bank (deposit)') : `${TYPE_LBL[t.type]}${t.category ? ' — ' + t.category : ''}`) : HOLD.includes(t.type) ? `${holdLbl(t)} — ${pName(t.partyId)||'?'}` : (t.type==='receipt'||t.type==='payment') ? `${TYPE_LBL[t.type]} — ${pName(t.partyId)||'?'}` : (t.category || TYPE_LBL[t.type]);
   const meta = [fd(t.date), mName(t.machineId), t.type==='income'||t.type==='expense' ? pName(t.partyId) : '', qtyText(t), t.mode].filter(Boolean).join(' · ');
   return `<div class="item" onclick="A.editTx('${t.id}')"><div class="av" style="background:${TBG[t.type]}">${ICON[t.type]}</div>
     <div class="mid"><div class="t">${esc(title)}</div><div class="s">${esc(meta)}${t.note?`<br>${esc(t.note)}`:''}</div></div>
@@ -336,7 +373,7 @@ const VIEWS = {
     const r = summ(S.period), bal = partyBalances();
     let rec = 0, pay = 0; Object.values(bal).forEach(v => v > 0 ? rec += v : pay -= v);
     const loanOut = sum(DB.loans, l => loanStats(l).out), activeLease = DB.leases.filter(l => l.status !== 'Closed').length;
-    const H = heldTotals(), upcoming = DB.bookings.filter(b => b.status === 'Booked').sort((a,b) => (a.from||'').localeCompare(b.from||''));
+    const MB = moneyBal(), H = heldTotals(), upcoming = DB.bookings.filter(b => b.status === 'Booked').sort((a,b) => (a.from||'').localeCompare(b.from||''));
     const top = DB.parties.map(p => ({p, b: bal[p.id]||0})).filter(x => x.b > 0.5).sort((a,b) => b.b - a.b).slice(0,5);
     const mRows = Object.entries(r.byM).sort((a,b) => (b[1].i-b[1].e) - (a[1].i-a[1].e));
     return `<div class="filters">${periodSel()}</div>
@@ -353,6 +390,8 @@ const VIEWS = {
       ${stat('Deposit Held (Leases)', inr(H.dep), 'blu', 'A.hd(\'deposit\')')}
       ${stat('Open Bookings', upcoming.length, 'blu', 'A.hd(\'bookings\')')}
       ${stat('Active Leases', activeLease, 'blu', 'A.hd(\'leases\')')}
+      ${stat('💵 Cash + 🏦 Bank', inr(MB.total), MB.total >= 0 ? 'blu' : 'exp', 'A.money()')}
+      ${stat('📊 Net Worth', inr(netWorth().net), 'inc', 'A.money()')}
     </div>
     <div class="btns" style="margin:12px 0">
       <button class="btn" onclick="A.newTx('income')">🌾 + Income</button>
@@ -412,6 +451,7 @@ const VIEWS = {
   more(){
     return `<div class="tiles">
       <button class="tile" onclick="A.go('bookings')"><span class="i">📅</span>Bookings &amp; Advance</button>
+      <button class="tile" onclick="A.money()"><span class="i">💰</span>Cash, Bank &amp; Net Worth</button>
       <button class="tile" onclick="A.go('loans')"><span class="i">🏦</span>Loans &amp; EMI</button>
       <button class="tile" onclick="A.go('machines')"><span class="i">🚜</span>Machines</button>
       <button class="tile" onclick="A.go('reports')"><span class="i">📊</span>Reports</button>
@@ -423,7 +463,8 @@ const VIEWS = {
   machines(){
     return sub('🚜 Machines') + `<div class="card">${DB.machines.length ? DB.machines.map(m => { const s = machineStats(m.id), lease = DB.leases.find(l => l.machineId===m.id && l.status!=='Closed');
       return `<div class="item" onclick="A.machine('${m.id}')"><div class="av">${m.type==='Harvester'?'🌾':'🚜'}</div>
-        <div class="mid"><div class="t">${esc(m.name)} ${lease?'<span class="tag y">On Lease</span>':''}</div><div class="s">${esc([m.type,m.regNo].filter(Boolean).join(' · '))}<br>Income ${inr(s.i)} · Exp ${inr(s.e)}</div></div>
+        <div class="mid"><div class="t">${esc(m.name)} ${lease?'<span class="tag y">On Lease</span>':''}</div><div class="s">${esc([m.type,m.regNo].filter(Boolean).join(' · '))}<br>Income ${inr(s.i)} · Exp ${inr(s.e)}${num(m.cost) ? `<br>💰 Cost ${inr(m.cost)}${num(m.value) ? ` · Value now ${inr(m.value)}` : ''}` : '<br><span class="pen">⚠ Purchase cost not entered — tap to add</span>'}</div>
+          ${num(m.cost) ? `<div style="background:#e5e7eb;border-radius:6px;height:8px;margin-top:5px;overflow:hidden"><div style="height:8px;background:#16a34a;width:${Math.max(0, Math.min(100, (s.i-s.e)/num(m.cost)*100))}%"></div></div><div style="font-size:11px;color:var(--mu)">${Math.round((s.i-s.e)/num(m.cost)*100)}% of cost recovered from profit</div>` : ''}</div>
         <div class="amt ${s.i-s.e>=0?'inc':'exp'}">${inr(s.i-s.e)}<small>profit (all)</small></div></div>`; }).join('') : '<div class="empty">No machines yet. Tap + to add Harvester / Tractor.</div>'}</div>`;
   },
 
@@ -528,7 +569,8 @@ function entryChooser(){
   openSheet('What do you want to add?',
     big("A.newTx('income')", '#dcfce7', '🆕', 'New Entry', 'New work done (Income) or new cost like diesel, repair, salary (Expense)') +
     big("A.newTx('receipt')", '#dbeafe', '⏳', 'Old Pending Payment', 'Money received from a party for old dues, or money paid for old dues') +
-    big("A.close();A.newBooking()", '#e0e7ff', '📅', 'Booking / Advance', 'Book a machine for a future date and take advance'));
+    big("A.close();A.newBooking()", '#e0e7ff', '📅', 'Booking / Advance', 'Book a machine for a future date and take advance') +
+    big("A.own('drawing')", '#fce7f3', '🏠', 'Personal / Bank', 'Money taken for family use, own money added, cash deposited to bank or withdrawn'));
 }
 
 /* ---------- Home card → full record list ---------- */
@@ -578,6 +620,77 @@ function homeDetail(kind){
   } else if (kind === 'bookings') { S.bkStatus = 'Booked'; A.go('bookings'); return; }
   else if (kind === 'leases') { A.go('leases'); return; }
   openSheet(title, body);
+}
+
+/* ---------- own money: personal use, money added, cash <-> bank ---------- */
+const DRAW_CATS = ['Household / Family','Personal','Function / Gift','Education','Savings / Investment','Other'];
+function ownForm(id, preset = {}){
+  const t = id ? {...DB.txns.find(x => x.id === id)} : {type:'drawing', date:today(), mode:'Cash', dir:'toBank', ...preset};
+  const f = openSheet(id ? 'Edit · Personal / Bank' : '🏠 Personal / Bank', `
+    <div class="seg" id="oseg">${OWN.map(k => `<button type="button" data-v="${k}">${ICON[k]} ${k==='drawing'?'Personal Use':k==='capital'?'Money Added':'Cash↔Bank'}</button>`).join('')}</div>
+    <input type="hidden" name="type" value="${t.type}">
+    <div id="oInfo" style="font-size:12px;color:var(--mu);margin:-4px 0 8px"></div>
+    <label>Date<input type="date" name="date" value="${esc(t.date)}"></label>
+    <div class="o-dc"><label id="modeLbl">Paid from<select name="mode">${opts(MODES, t.mode)}</select></label></div>
+    <div class="o-d"><label>Used for<select name="category">${opts(DRAW_CATS, t.category)}</select></label></div>
+    <div class="o-t"><label>Direction<select name="dir"><option value="toBank" ${t.dir!=='toCash'?'selected':''}>Cash → Bank (deposit)</option><option value="toCash" ${t.dir==='toCash'?'selected':''}>Bank → Cash (withdrawal)</option></select></label></div>
+    <label>Amount ₹ *<input name="amount" inputmode="decimal" required value="${esc(t.amount||'')}" style="font-size:18px;font-weight:700"></label>
+    <label>Note<input name="note" value="${esc(t.note||'')}"></label>
+    <div id="oBal" style="font-size:13px;font-weight:600" class="blu"></div>`,
+  { onSave: d => {
+      const a = num(d.amount); if (a <= 0) return toast('Enter amount'), false;
+      const rec = {type:d.type, date:d.date, amount:a, note:d.note.trim(), partyId:'', machineId:'',
+        mode: d.type === 'transfer' ? '' : d.mode, category: d.type === 'drawing' ? d.category : '', dir: d.type === 'transfer' ? d.dir : ''};
+      id ? store.set('txns', id, rec) : store.add('txns', rec);
+    }, onDelete: id ? () => store.del('txns', id) : null });
+  const E = f.elements, INFO = {drawing:'Money taken from business for family / personal use. Not a business expense — profit stays same.',
+    capital:'Your own / family money put into the business (not a loan, not income).', transfer:'Moving money between cash in hand and bank. Nothing is earned or spent.'};
+  const set = ty => { E.type.value = ty; f.querySelectorAll('#oseg button').forEach(b => b.classList.toggle('on', b.dataset.v === ty));
+    f.querySelector('.o-dc').classList.toggle('hidden', ty === 'transfer'); f.querySelector('.o-d').classList.toggle('hidden', ty !== 'drawing');
+    f.querySelector('.o-t').classList.toggle('hidden', ty !== 'transfer'); $('#modeLbl').firstChild.textContent = ty === 'capital' ? 'Received in' : 'Paid from';
+    $('#oInfo').textContent = INFO[ty]; };
+  f.querySelectorAll('#oseg button').forEach(b => b.onclick = () => set(b.dataset.v));
+  const m = moneyBal(); $('#oBal').textContent = `Now: Cash in hand ${inr(m.cash)} · Bank ${inr(m.bank)}`;
+  set(t.type);
+}
+function openingForm(){
+  const o = opening();
+  openSheet('Opening Cash & Bank Balance', `
+    <div class="card" style="background:#fef3c7;font-size:13px">Enter how much cash and bank balance you had on the <b>start date</b>. Use the date of your first entry in this app, so everything adds up correctly.</div>
+    <label>As on date<input type="date" name="asOf" value="${esc(o.asOf || (DB.txns.length ? [...DB.txns].sort(byDateAsc)[0].date : today()))}"></label>
+    <div class="row"><label>Cash in hand ₹<input name="cash" inputmode="decimal" value="${esc(o.cash ?? '')}"></label><label>Bank balance ₹<input name="bank" inputmode="decimal" value="${esc(o.bank ?? '')}"></label></div>`,
+  { onSave: d => { store.set('meta', 'opening', {asOf: d.asOf, cash: num(d.cash), bank: num(d.bank)}); } });
+}
+function moneySheet(){
+  const N = netWorth(), U = profitUse(S.period), PL = periodLabel(S.period), o = opening();
+  const draws = DB.txns.filter(t => OWN.includes(t.type) && inRange(t.date, S.period)).sort(byDateDesc);
+  const row = (l, v, c='') => `<tr><td>${l}</td><td class="n ${c}">${v}</td></tr>`;
+  openSheet('💰 Cash, Bank & Net Worth', `
+    <div class="grid" style="margin-bottom:8px">${stat('💵 Cash in Hand', inr(N.cash), N.cash >= 0 ? 'inc' : 'exp')}${stat('🏦 Bank Balance', inr(N.bank), N.bank >= 0 ? 'blu' : 'exp')}</div>
+    ${!o.asOf ? `<div class="card" style="background:#fef3c7;font-size:13px">⚠ Opening balance not set — Cash/Bank shown only from entries. <button type="button" class="btn s y" style="margin-top:6px" onclick="A.opening()">Set opening balance</button></div>` : ''}
+    <div class="btns" style="margin-bottom:10px"><button type="button" class="btn s" style="background:#db2777" onclick="A.own('drawing')">🏠 Personal Use</button><button type="button" class="btn s" onclick="A.own('capital')">💼 Money Added</button><button type="button" class="btn s o" onclick="A.own('transfer')">🔄 Cash↔Bank</button></div>
+    <h2>📊 Net Worth (today)</h2>
+    <div class="card"><table>
+      <tr><th colspan="2">What you HAVE</th></tr>
+      ${row('Cash in hand', inr(N.cash))}${row('Bank balance', inr(N.bank))}${row('Money to receive from parties', inr(N.rec))}${row('Machines value', inr(N.mach))}
+      <tr><th>Total assets</th><th class="n inc">${inr(N.assets)}</th></tr>
+      <tr><th colspan="2">What you OWE</th></tr>
+      ${row('Loans outstanding', inr(N.loans))}${row('Money to pay parties', inr(N.pay))}${row('Booking advance held (refundable)', inr(N.adv))}${row('Lease deposit held (refundable)', inr(N.dep))}
+      <tr><th>Total liabilities</th><th class="n exp">${inr(N.liab)}</th></tr>
+      <tr style="background:${N.net >= 0 ? '#dcfce7' : '#fee2e2'}"><th>NET WORTH</th><th class="n" style="font-size:20px">${inr(N.net)}</th></tr></table>
+      <div style="font-size:11px;color:var(--mu);margin-top:6px">Machines value = "Current value" in Machines (or purchase cost if not set).</div></div>
+    <h2>🧭 Where did the profit go? · ${esc(PL)}</h2>
+    <div class="card"><table>
+      ${row('Net profit earned', inr(U.profit), U.profit >= 0 ? 'inc' : 'exp')}
+      ${U.cap ? row('+ Own money added', inr(U.cap), 'inc') : ''}${U.loanIn ? row('+ New loans taken', inr(U.loanIn), 'inc') : ''}
+      ${row('− Loan principal repaid', '− ' + inr(U.prin), 'exp')}
+      ${row('− Personal / family use', '− ' + inr(U.draw), 'exp')}
+      ${row('± Dues not yet collected / advances / other', (U.other >= 0 ? '+ ' : '− ') + inr(Math.abs(U.other)))}
+      <tr><th>= Increase in Cash + Bank</th><th class="n ${U.change >= 0 ? 'inc' : 'exp'}">${inr(U.change)}</th></tr></table>
+      <div style="font-size:11px;color:var(--mu);margin-top:6px">Cash + Bank: start ${inr(U.startBal)} → end ${inr(U.endBal)}. Change the month at the top of Home to see another period.</div></div>
+    <h2>🏠 Personal & Bank entries · ${esc(PL)}</h2>
+    <div class="card">${draws.length ? draws.map(txRow).join('') : '<div class="empty">No personal / bank entries</div>'}</div>
+    <button type="button" class="btn s o" style="width:100%" onclick="A.opening()">⚙️ Opening cash & bank balance</button>`);
 }
 
 /* ---------- transaction form ---------- */
@@ -711,11 +824,12 @@ function machineForm(id){
     <label>Machine name *<input name="name" required placeholder="e.g. Harvester – Kartar 4000" value="${esc(m.name||'')}"></label>
     <div class="row"><label>Type<select name="type">${opts(MACHINE_TYPES, m.type)}</select></label><label>Reg. No.<input name="regNo" value="${esc(m.regNo||'')}"></label></div>
     <div class="row"><label>Purchase date<input type="date" name="purchaseDate" value="${esc(m.purchaseDate||'')}"></label><label>Purchase cost ₹<input name="cost" inputmode="decimal" value="${esc(m.cost||'')}"></label></div>
+    <label>Current value ₹ <small>(resale value today — used for Net Worth; blank = purchase cost)</small><input name="value" inputmode="decimal" value="${esc(m.value||'')}"></label>
     <label>Note (insurance, service due…)<textarea name="note" rows="2">${esc(m.note||'')}</textarea></label>
     ${id ? `<button type="button" class="btn s o" style="width:100%;margin-bottom:6px" onclick="A.close();A.bookMachine('${id}')">📒 View this machine's entries</button>` : ''}`,
   { onSave: d => {
       if (!d.name.trim()) return toast('Enter machine name'), false;
-      const rec = {name:d.name.trim(), type:d.type, regNo:d.regNo.trim(), purchaseDate:d.purchaseDate, cost:num(d.cost), note:d.note.trim()};
+      const rec = {name:d.name.trim(), type:d.type, regNo:d.regNo.trim(), purchaseDate:d.purchaseDate, cost:num(d.cost), value:num(d.value), note:d.note.trim()};
       id ? store.set('machines', id, rec) : store.add('machines', rec);
     },
     onDelete: id ? () => { if (DB.txns.some(t => t.machineId === id)) { alert('This machine has entries. Delete those first.'); return; } store.del('machines', id); } : null });
@@ -919,6 +1033,7 @@ const minsTxt = m => `${hm(m)} (${Math.round(m)} min)`;
 function leaseStatement(lid){
   const D = leaseLedgerData(lid); if (!D) return;
   const {l, p, rows, S, bal, held, net} = D;
+  delete pdfCache[lid]; preparePdf(lid).catch(() => {});   // fresh PDF ready in background
   const msg = encodeURIComponent(`NAYAK Agro – Lease Ledger\n${mName(l.machineId)} → ${p.name||''}\nFrom ${fd(l.start)} till ${fd(today())}\n\nTotal time: ${minsTxt(S.mins)}\nRent: ₹${Math.round(S.rent).toLocaleString('en-IN')}\nLess fuel${S.fuelL ? ' (' + S.fuelL + ' L)' : ''}: ₹${Math.round(S.fuel).toLocaleString('en-IN')}${S.other ? `\nLess other costs: ₹${Math.round(S.other).toLocaleString('en-IN')}` : ''}${S.adj ? `\nLess deposit adjusted: ₹${Math.round(S.adj).toLocaleString('en-IN')}` : ''}\nLess received: ₹${Math.round(S.recd).toLocaleString('en-IN')}\nBalance: ₹${Math.round(bal).toLocaleString('en-IN')}\nSecurity deposit held: ₹${Math.round(held).toLocaleString('en-IN')}\n\n${net >= 0 ? 'Final amount to pay' : 'Final refund to you'}: ₹${Math.round(Math.abs(net)).toLocaleString('en-IN')}\nDhanyavad 🙏`);
   const ph = (p.phone||'').replace(/\D/g,'').slice(-10);
   openSheet('📋 Lease Ledger', `
@@ -933,7 +1048,7 @@ function leaseStatement(lid){
       <tr><th>Balance ${bal >= 0 ? 'to pay' : 'we owe'}</th><th class="n">${inr(Math.abs(bal))}</th></tr>
       <tr><td>Security deposit held</td><td class="n blu">− ${inr(held)}</td></tr>
       <tr style="background:${net >= 0 ? '#fef3c7' : '#fee2e2'}"><th>${net >= 0 ? 'Final: lessee has to pay' : 'Final: refund to lessee'}</th><th class="n" style="font-size:20px">${inr(Math.abs(net))}</th></tr></table></div>
-    <div class="btns" style="margin-bottom:8px"><button type="button" class="btn s" onclick="A.ledgerPdf('${lid}')">⬇ Download PDF</button><button type="button" class="btn s b" onclick="A.ledgerPdf('${lid}',1)">📤 Share PDF</button>
+    <div class="btns" style="margin-bottom:8px"><button type="button" class="btn s" onclick="A.ledgerPdf('${lid}')">⬇ Download PDF</button><button type="button" class="btn s b" onclick="A.sharePdf('${lid}')">📤 Share PDF</button>
       ${ph ? `<a class="btn s" style="background:#25d366;text-decoration:none;text-align:center" href="https://wa.me/91${ph}?text=${msg}" target="_blank">WhatsApp</a>` : ''}</div>
     <div class="btns" style="margin-bottom:10px">
       ${bal > 0.5 ? `<button type="button" class="btn s b" onclick="A.newTx('receipt',{partyId:'${l.partyId}',amount:${Math.round(bal)}})">💰 Receive ${inr(bal)}</button>` : ''}
@@ -994,17 +1109,22 @@ async function ledgerPdfDoc(lid){
   for (let i = 1; i <= pages; i++) { doc.setPage(i); doc.setFontSize(8); doc.setTextColor(120); doc.text(`Page ${i} of ${pages}`, W-14, doc.internal.pageSize.getHeight() - 8, {align:'right'}); }
   return {doc, name: `NAYAK-Lease-Ledger-${pt(p.name||'lessee').trim().replace(/\s+/g,'-')}-${today()}.pdf`, title: `Lease Ledger - ${pt(p.name||'')}`};
 }
-async function ledgerPdf(lid, share){
-  toast('Making PDF…', 1500);
-  try {
-    const R = await ledgerPdfDoc(lid); if (!R) return;
-    if (share) {
-      const file = new File([R.doc.output('blob')], R.name, {type: 'application/pdf'});
-      if (navigator.canShare && navigator.canShare({files: [file]})) { await navigator.share({files: [file], title: R.title}); return; }
-      toast('Sharing not supported here — downloading instead', 2500);
-    }
-    R.doc.save(R.name); toast('PDF saved to Downloads ✓', 2500);
-  } catch (e) { if (e.name !== 'AbortError') alert(e.message); }
+/* PDF is built in the background when the ledger opens, so Share can run instantly on tap (Android needs that) */
+const pdfCache = {};
+async function preparePdf(lid){
+  const R = await ledgerPdfDoc(lid); if (!R) return null;
+  return pdfCache[lid] = {...R, file: new File([R.doc.output('blob')], R.name, {type: 'application/pdf'})};
+}
+async function ledgerPdf(lid){
+  try { const c = pdfCache[lid] || (toast('Making PDF…', 1500), await preparePdf(lid)); c.doc.save(c.name); toast('PDF saved to Downloads ✓', 2500); }
+  catch (e) { alert(e.message); }
+}
+function sharePdf(lid){
+  const c = pdfCache[lid];
+  if (!c) { toast('Preparing PDF… tap Share PDF again in 2 seconds', 2500); preparePdf(lid).then(() => toast('PDF ready ✓ — tap Share PDF', 2500)).catch(e => alert(e.message)); return; }
+  const saveInstead = msg => { c.doc.save(c.name); toast(msg, 4500); };
+  if (!(navigator.canShare && navigator.canShare({files: [c.file]}))) return saveInstead('Share not supported — PDF saved to Downloads. Attach it in WhatsApp 📎');
+  navigator.share({files: [c.file], title: c.title}).catch(e => { if (e.name !== 'AbortError') saveInstead('Share blocked — PDF saved to Downloads. Attach it in WhatsApp 📎'); });
 }
 function printHtml(html, title){
   let pa = $('#printArea'); if (!pa) { pa = document.createElement('div'); pa.id = 'printArea'; document.body.appendChild(pa); }
@@ -1060,11 +1180,11 @@ function loanForm(id){
     <div class="row"><label>Loan amount ₹ *<input name="principal" inputmode="decimal" required value="${esc(l.principal||'')}"></label><label>Date taken<input type="date" name="date" value="${esc(l.date||'')}"></label></div>
     <div class="row"><label>Interest % per year<input name="rate" inputmode="decimal" value="${esc(l.rate||'')}" placeholder="₹2/100/month = 24"></label><label>Tenure (months)<input name="tenure" inputmode="numeric" value="${esc(l.tenure||'')}"></label></div>
     <div class="row"><label>EMI ₹<input name="emi" inputmode="decimal" value="${esc(l.emi||'')}"></label><label>Status<select name="status">${opts(['Open','Closed'], l.status)}</select></label></div>
-    <label>For machine<select name="machineId">${machineOpts(l.machineId)}</select></label>
+    <div class="row"><label>For machine<select name="machineId">${machineOpts(l.machineId)}</select></label><label>Money received in<select name="mode">${opts(['Bank','Cash','Paid to dealer directly'], l.mode || (id ? loanMode(l) : 'Bank'))}</select></label></div>
     <label>Note<textarea name="note" rows="2">${esc(l.note||'')}</textarea></label>`,
   { onSave: d => {
       if (!d.lender.trim() || num(d.principal) <= 0) return toast('Enter lender and amount'), false;
-      const rec = {kind:d.kind, lender:d.lender.trim(), ref:d.ref.trim(), principal:num(d.principal), date:d.date, rate:num(d.rate), tenure:d.tenure, emi:num(d.emi), status:d.status, machineId:d.machineId, note:d.note.trim()};
+      const rec = {mode:d.mode, kind:d.kind, lender:d.lender.trim(), ref:d.ref.trim(), principal:num(d.principal), date:d.date, rate:num(d.rate), tenure:d.tenure, emi:num(d.emi), status:d.status, machineId:d.machineId, note:d.note.trim()};
       id ? store.set('loans', id, rec) : store.add('loans', rec);
     },
     onDelete: id ? () => { DB.loanPays.filter(p => p.loanId === id).forEach(p => store.del('loanPays', p.id)); store.del('loans', id); } : null });
@@ -1178,7 +1298,10 @@ window.A = {
   dueOnly(force){ S.dueOnly = force === true ? true : !S.dueOnly; render(); },
   fab(){ ({home:entryChooser, book:entryChooser, parties:()=>partyForm(), loans:()=>loanForm(), machines:()=>machineForm(), leases:()=>leaseForm(), bookings:()=>bookingForm()}[S.tab] || (()=>{}))(); },
   newTx(type, preset={}){ txForm(null, {type, ...preset}); },
-  editTx(id){ const t = DB.txns.find(x => x.id === id); if (t) HOLD.includes(t.type) ? holdTxForm(id) : txForm(id); },
+  editTx(id){ const t = DB.txns.find(x => x.id === id); if (t) OWN.includes(t.type) ? ownForm(id) : HOLD.includes(t.type) ? holdTxForm(id) : txForm(id); },
+  own: ty => ownForm(null, {type: ty}),
+  opening: () => openingForm(),
+  money: () => moneySheet(),
   newBooking: (preset={}) => bookingForm(null, preset),
   booking: id => bookingView(id),
   editBooking: id => bookingForm(id),
@@ -1194,7 +1317,8 @@ window.A = {
   lease: id => leaseForm(id),
   leaseFuel: id => leaseFuelForm(id),
   leaseStmt: id => leaseStatement(id),
-  ledgerPdf: (id, sh) => ledgerPdf(id, !!sh),
+  ledgerPdf: id => ledgerPdf(id),
+  sharePdf: id => sharePdf(id),
   leaseBill(id){ const l = DB.leases.find(x => x.id === id); if (TIME_BASIS.includes(l.basis)) return leaseTimeBill(id); txForm(null, {type:'income', category:'Lease Rent', machineId:l.machineId, partyId:l.partyId, leaseId:id, amount:l.rent||'', paid:'0', note:`Lease rent (${l.basis})`}); },
   loan: id => loanView(id),
   editLoan: id => loanForm(id),
