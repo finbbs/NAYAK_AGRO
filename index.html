@@ -242,19 +242,54 @@ const bookingAdv = id => sum(DB.txns.filter(t => t.bookingId === id && t.type ==
 const isBank = m => !!m && m !== 'Cash' && m !== 'Adjusted';      // UPI / Bank / Cheque = bank account
 const opening = () => DB.meta.find(x => x.id === 'opening') || {};
 const loanMode = l => l.mode || 'Paid to dealer directly';   // old loans (saved before this option) = used for machine, not cash
+/* every money movement in cash / bank (used for balances and statements) */
+function moneyMoves(){
+  const o = opening(), from = o.asOf || '0000-00-00', out = [];
+  const add = (mode, v, d, c, t, g, ref) => { if (mode === 'Adjusted' || !v || (d || '') < from) return; out.push({acct: isBank(mode) ? 'bank' : 'cash', v, d, c: c || 0, t, g, mode, ...ref}); };
+  for (const t of DB.txns) { const a = num(t.amount), pd = num(t.paid), who = pName(t.partyId), ref = {id: t.id};
+    if (t.type === 'income') add(t.mode, pd, t.date, t.createdAt, `${t.category || 'Income'}${who ? ' — ' + who : ''}`, 'Work / rent money received', ref);
+    else if (t.type === 'expense') add(t.mode, -pd, t.date, t.createdAt, `${t.category || 'Expense'}${who ? ' — ' + who : mName(t.machineId) ? ' — ' + mName(t.machineId) : ''}`, 'Business expenses paid', ref);
+    else if (t.type === 'receipt') add(t.mode, a, t.date, t.createdAt, `Received — ${who}${t.note ? ' (' + t.note + ')' : ''}`, 'Dues / advance received', ref);
+    else if (t.type === 'advance') add(t.mode, a, t.date, t.createdAt, `${holdLbl(t)} — ${who}`, 'Dues / advance received', ref);
+    else if (t.type === 'capital') add(t.mode, a, t.date, t.createdAt, 'Own money added', 'Own money added', ref);
+    else if (t.type === 'payment') add(t.mode, -a, t.date, t.createdAt, `Paid — ${who}`, 'Old dues paid to parties', ref);
+    else if (t.type === 'refund') add(t.mode, -a, t.date, t.createdAt, `${holdLbl(t)} — ${who}`, 'Refunds', ref);
+    else if (t.type === 'drawing') add(t.mode, -a, t.date, t.createdAt, `Personal use${t.category ? ' — ' + t.category : ''}`, 'Personal / family use', ref);
+    else if (t.type === 'transfer') { const toCash = t.dir === 'toCash';
+      add('Bank', toCash ? -a : a, t.date, t.createdAt, toCash ? 'Withdrawn to cash' : 'Cash deposited', 'Cash ↔ Bank transfer', ref);
+      add('Cash', toCash ? a : -a, t.date, t.createdAt, toCash ? 'Withdrawn from bank' : 'Deposited to bank', 'Cash ↔ Bank transfer', ref); } }
+  for (const l of DB.loans) if (loanMode(l) !== 'Paid to dealer directly') add(loanMode(l), num(l.principal), l.date, l.createdAt, `Loan taken — ${l.lender}`, 'Loans taken', {loan: l.id});
+  for (const p of DB.loanPays) { const l = DB.loans.find(x => x.id === p.loanId) || {}; add(p.mode, -num(p.amount), p.date, p.createdAt, `EMI / repayment — ${l.lender || ''}`, 'Loan EMI / repayment', {loan: p.loanId}); }
+  return out;
+}
 function moneyBal(upto){   // cash & bank balance at end of date "upto" (or today)
   const o = opening(), from = o.asOf || '0000-00-00', end = upto || '9999-12-31';
   let cash = 0, bank = 0; if (from <= end) { cash = num(o.cash); bank = num(o.bank); }
-  const ok = d => (d || '') >= from && (d || '') <= end;
-  const add = (mode, v) => { if (mode === 'Adjusted' || !v) return; if (isBank(mode)) bank += v; else cash += v; };
-  for (const t of DB.txns) { if (!ok(t.date)) continue; const a = num(t.amount), pd = num(t.paid);
-    if (t.type === 'income') add(t.mode, pd); else if (t.type === 'expense') add(t.mode, -pd);
-    else if (['receipt','advance','capital'].includes(t.type)) add(t.mode, a);
-    else if (['payment','refund','drawing'].includes(t.type)) add(t.mode, -a);
-    else if (t.type === 'transfer') { if (t.dir === 'toCash') { bank -= a; cash += a; } else { cash -= a; bank += a; } } }
-  for (const l of DB.loans) if (ok(l.date) && loanMode(l) !== 'Paid to dealer directly') add(loanMode(l), num(l.principal));
-  for (const p of DB.loanPays) if (ok(p.date)) add(p.mode, -num(p.amount));
+  for (const m of moneyMoves()) if ((m.d || '') <= end) { if (m.acct === 'bank') bank += m.v; else cash += m.v; }
   return {cash, bank, total: cash + bank};
+}
+function acctStatement(acct){
+  const o = opening(), open = num(acct === 'bank' ? o.bank : o.cash);
+  const L = moneyMoves().filter(m => m.acct === acct).sort((a,b) => (a.d||'').localeCompare(b.d||'') || a.c - b.c);
+  let run = open; L.forEach(m => m.run = (run += m.v));
+  const inT = sum(L.filter(m => m.v > 0), m => m.v), outT = -sum(L.filter(m => m.v < 0), m => m.v);
+  const G = {}; L.forEach(m => { (G[m.g] ||= {in:0, out:0}); if (m.v > 0) G[m.g].in += m.v; else G[m.g].out -= m.v; });
+  const gRows = Object.entries(G).sort((a,b) => (b[1].in + b[1].out) - (a[1].in + a[1].out));
+  openSheet(acct === 'bank' ? '🏦 Bank Statement' : '💵 Cash Book', `
+    <div class="card" style="background:${acct === 'bank' ? '#dbeafe' : '#dcfce7'}"><div style="font-size:12px;color:var(--mu)">Balance now${acct === 'bank' ? ' (UPI + Bank + Cheque)' : ''}</div><div class="big ${run >= 0 ? (acct === 'bank' ? 'blu' : 'inc') : 'exp'}">${inr(run)}</div></div>
+    <div class="card"><table>
+      <tr><td>Opening balance ${o.asOf ? '(' + fd(o.asOf) + ')' : '<span class="pen">(not set)</span>'}</td><td class="n">${inr(open)}</td></tr>
+      <tr><td>+ Total money in</td><td class="n inc">${inr(inT)}</td></tr>
+      <tr><td>− Total money out</td><td class="n exp">− ${inr(outT)}</td></tr>
+      <tr><th>= Balance now</th><th class="n">${inr(run)}</th></tr></table></div>
+    <h2>📊 Breakup</h2>
+    <div class="card"><table><tr><th>Type</th><th class="n">In</th><th class="n">Out</th></tr>
+      ${gRows.map(([g, v]) => `<tr><td>${esc(g)}</td><td class="n inc">${v.in ? inr(v.in) : ''}</td><td class="n exp">${v.out ? inr(v.out) : ''}</td></tr>`).join('') || '<tr><td colspan="3" class="empty">No entries</td></tr>'}</table></div>
+    ${!o.asOf ? `<button type="button" class="btn s y" style="width:100%;margin-bottom:8px" onclick="A.opening()">⚙️ Set opening balance</button>` : ''}
+    <h2>📒 All entries (newest first)</h2>
+    <div class="card"><table><tr><th>Date</th><th>Detail</th><th class="n">Amount</th><th class="n">Balance</th></tr>
+      ${[...L].reverse().map(m => `<tr onclick="${m.id ? `A.editTx('${m.id}')` : `A.loan('${m.loan}')`}"><td>${fd(m.d)}</td><td>${esc(m.t)}${acct === 'bank' && m.mode && m.mode !== 'Bank' ? ` <small>(${esc(m.mode)})</small>` : ''}</td><td class="n ${m.v > 0 ? 'inc' : 'exp'}">${m.v > 0 ? '+' : '−'}${inr(Math.abs(m.v))}</td><td class="n">${inr(m.run)}</td></tr>`).join('')}
+      <tr><td>${o.asOf ? fd(o.asOf) : ''}</td><td>Opening balance</td><td></td><td class="n">${inr(open)}</td></tr></table></div>`);
 }
 function netWorth(){
   const m = moneyBal(), {rec, pay, adv} = dueSplit();
@@ -672,13 +707,13 @@ function moneySheet(){
   const draws = DB.txns.filter(t => OWN.includes(t.type) && inRange(t.date, S.period)).sort(byDateDesc);
   const row = (l, v, c='') => `<tr><td>${l}</td><td class="n ${c}">${v}</td></tr>`;
   openSheet('💰 Cash, Bank & Net Worth', `
-    <div class="grid" style="margin-bottom:8px">${stat('💵 Cash in Hand', inr(N.cash), N.cash >= 0 ? 'inc' : 'exp')}${stat('🏦 Bank Balance', inr(N.bank), N.bank >= 0 ? 'blu' : 'exp')}</div>
+    <div class="grid" style="margin-bottom:8px">${stat('💵 Cash in Hand', inr(N.cash), N.cash >= 0 ? 'inc' : 'exp', 'A.acct(\'cash\')')}${stat('🏦 Bank Balance', inr(N.bank), N.bank >= 0 ? 'blu' : 'exp', 'A.acct(\'bank\')')}</div>
     ${!o.asOf ? `<div class="card" style="background:#fef3c7;font-size:13px">⚠ Opening balance not set — Cash/Bank shown only from entries. <button type="button" class="btn s y" style="margin-top:6px" onclick="A.opening()">Set opening balance</button></div>` : ''}
     <div class="btns" style="margin-bottom:10px"><button type="button" class="btn s" style="background:#db2777" onclick="A.own('drawing')">🏠 Personal Use</button><button type="button" class="btn s" onclick="A.own('capital')">💼 Money Added</button><button type="button" class="btn s o" onclick="A.own('transfer')">🔄 Cash↔Bank</button></div>
     <h2>📊 Net Worth (today)</h2>
     <div class="card"><table>
       <tr><th colspan="2">What you HAVE</th></tr>
-      ${row('Cash in hand', inr(N.cash))}${row('Bank balance', inr(N.bank))}${row('Money to receive from parties', inr(N.rec))}${row('Machines value', inr(N.mach))}
+      ${row('<a href="#" onclick="A.acct(\'cash\');return false">Cash in hand ›</a>', inr(N.cash))}${row('<a href="#" onclick="A.acct(\'bank\');return false">Bank balance ›</a>', inr(N.bank))}${row('Money to receive from parties', inr(N.rec))}${row('Machines value', inr(N.mach))}
       <tr><th>Total assets</th><th class="n inc">${inr(N.assets)}</th></tr>
       <tr><th colspan="2">What you OWE</th></tr>
       ${row('Loans outstanding', inr(N.loans))}${row('Money to pay (shops, staff…)', inr(N.pay))}${row('Advance from clients (work / rent still to give)', inr(N.adv))}
@@ -1326,6 +1361,7 @@ window.A = {
   own: ty => ownForm(null, {type: ty}),
   opening: () => openingForm(),
   money: () => moneySheet(),
+  acct: a => acctStatement(a),
   newBooking: (preset={}) => bookingForm(null, preset),
   booking: id => bookingView(id),
   editBooking: id => bookingForm(id),
