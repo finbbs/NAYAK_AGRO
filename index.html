@@ -9,7 +9,7 @@
 <link rel="manifest" href="manifest.json">
 <link rel="icon" href="icon.svg">
 <link rel="apple-touch-icon" href="icon-192.png">
-<title>NAYAK Agro Ledger</title>
+<title>NAYAK Agro </title>
 <style>
 :root{--g:#14532d;--g2:#166534;--gl:#dcfce7;--y:#f59e0b;--r:#dc2626;--b:#2563eb;--bg:#f4f6f3;--tx:#1f2937;--mu:#6b7280;--bd:#e5e7eb}
 *{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
@@ -70,7 +70,7 @@ table{width:100%;border-collapse:collapse;font-size:13px}td,th{padding:7px 4px;b
 
 <div id="login" class="hidden">
   <form class="box" id="loginForm">
-    <div class="brand"><div class="logo">N</div><h1>NAYAK</h1><p>Agro Ledger · Harvester &amp; Tractor Accounts</p></div>
+    <div class="brand"><div class="logo">N</div><h1>NAYAK Agro</h1><p> · Harvester &amp; Tractor Accounts</p></div>
     <label>Username<input name="u" autocomplete="username" required autocapitalize="none"></label>
     <label>Password<input name="p" type="password" autocomplete="current-password" required></label>
     <div class="err" id="loginErr"></div>
@@ -313,7 +313,7 @@ const VIEWS = {
     const top = DB.parties.map(p => ({p, b: bal[p.id]||0})).filter(x => x.b > 0.5).sort((a,b) => b.b - a.b).slice(0,5);
     const mRows = Object.entries(r.byM).sort((a,b) => (b[1].i-b[1].e) - (a[1].i-a[1].e));
     return `<div class="filters">${periodSel()}</div>
-    ${!DB.machines.length ? `<div class="card" style="background:#fef3c7"><b>Welcome to NAYAK Agro Ledger 🙏</b><p style="margin:6px 0 10px;font-size:13px">Start by adding your Harvester and Tractor, then record daily income &amp; expenses.</p><button class="btn s" onclick="A.go('machines');A.fab()">+ Add Machine</button></div>` : ''}
+    ${!DB.machines.length ? `<div class="card" style="background:#fef3c7"><b>Welcome to NAYAK Agro  🙏</b><p style="margin:6px 0 10px;font-size:13px">Start by adding your Harvester and Tractor, then record daily income &amp; expenses.</p><button class="btn s" onclick="A.go('machines');A.fab()">+ Add Machine</button></div>` : ''}
     <div class="grid">
       ${stat('Income (Work Billed)', inr(r.inc), 'inc')}
       ${stat('Expenses + Interest', inr(r.exp + r.int), 'exp')}
@@ -390,7 +390,7 @@ const VIEWS = {
       <button class="tile" onclick="A.go('reports')"><span class="i">📊</span>Reports</button>
       <button class="tile" onclick="A.go('settings')"><span class="i">⚙️</span>Settings &amp; Backup</button>
       <button class="tile" onclick="A.go('parties');A.dueOnly(true)"><span class="i">⏳</span>Pending Dues</button></div>
-      <p style="text-align:center;color:var(--mu);font-size:12px;margin-top:20px">NAYAK Agro Ledger · ${CLOUD?'☁️ Cloud sync (Firestore)':'📱 Local demo mode'}</p>`;
+      <p style="text-align:center;color:var(--mu);font-size:12px;margin-top:20px">NAYAK Agro  · ${CLOUD?'☁️ Cloud sync (Firestore)':'📱 Local demo mode'}</p>`;
   },
 
   machines(){
@@ -840,7 +840,7 @@ function exportCSV(){
   const rows = L.map(t => { const ie = t.type==='income'||t.type==='expense'; return [fd(t.date), TYPE_LBL[t.type], t.category, mName(t.machineId), pName(t.partyId), t.qty, t.rate, num(t.amount), num(t.paid), ie ? num(t.amount)-num(t.paid) : 0, t.mode, t.note].map(q).join(','); });
   download(`NAYAK-entries-${S.period}.csv`, '﻿' + [H.join(','), ...rows].join('\n'), 'text/csv');
 }
-function backup(){ download(`NAYAK-backup-${today()}.json`, JSON.stringify({app:'NAYAK Agro Ledger', at:new Date().toISOString(), data:DB}, null, 1), 'application/json'); }
+function backup(){ download(`NAYAK-backup-${today()}.json`, JSON.stringify({app:'NAYAK Agro ', at:new Date().toISOString(), data:DB}, null, 1), 'application/json'); }
 function restore(inp){
   const file = inp.files[0]; if (!file) return;
   const rd = new FileReader();
