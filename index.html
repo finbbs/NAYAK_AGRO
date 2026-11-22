@@ -524,8 +524,6 @@ const VIEWS = {
     ${!o.asOf ? `<div class="card" style="background:#fef3c7;font-size:13px">⚠ <b>Set opening balance once</b> — your real bank balance on the day of your first entry. <button class="btn s y" style="margin-top:6px" onclick="A.opening()">Set opening balance</button></div>` : ''}
     <div class="btns" style="margin:10px 0"><button class="btn" style="background:#2563eb;padding:14px" onclick="A.bankIn()">⬇️ Money IN</button><button class="btn r" style="padding:14px" onclick="A.bankOut()">⬆️ Money OUT</button></div>
     <div class="grid" style="margin-bottom:8px">${stat('⏳ To Receive', inr(DS.rec), 'pen', 'A.hd(\'receive\')')}${stat('💸 To Pay', inr(DS.pay), 'exp', 'A.hd(\'pay\')')}</div>
-    <div class="card"><div style="display:flex;justify-content:space-between;align-items:center"><b>🏦 Loans</b><span><button class="btn s o" onclick="A.bankIn('loan')">+ Loan</button> <button class="btn s" onclick="A.bankOut('emi')">Pay EMI</button></span></div>
-      ${loans.length ? loans.map(({l, s}) => `<div class="item" onclick="A.loan('${l.id}')"><div class="mid"><div class="t">${esc(l.lender)}</div><div class="s">${esc(l.kind)}${l.emi ? ' · EMI ' + inr(l.emi) : ''} · interest paid ${inr(s.ip)}</div></div><div class="amt exp">${inr(s.out)}<small>outstanding</small></div></div>`).join('') + `<div style="text-align:right;font-size:13px;margin-top:4px">Total outstanding: <b class="exp">${inr(sum(loans, x => x.s.out))}</b></div>` : '<div class="empty" style="padding:10px">No open loans</div>'}</div>
     <h2>📒 Bank Ledger</h2>
     <div class="filters">${perSelect(S.bper, 'A.bper')}<select onchange="A.bk2({g:this.value})"><option value="">All types</option>${Object.keys(G).sort().map(g => `<option ${F.g===g?'selected':''}>${esc(g)}</option>`).join('')}</select></div>
     <input id="bkq" placeholder="🔍 Search name, item…" value="${esc(F.q)}" oninput="A.bk2({q:this.value})" style="margin-bottom:8px">
@@ -533,13 +531,17 @@ const VIEWS = {
       <tr><td>Opening balance ${S.bper === 'all' ? (o.asOf ? '(' + fd(o.asOf) + ')' : '') : '(' + fd(a) + ')'}</td><td class="n">${inr(before)}</td></tr>
       <tr><td>+ Money in</td><td class="n inc">${inr(inT)}</td></tr><tr><td>− Money out</td><td class="n exp">− ${inr(outT)}</td></tr>
       <tr><th>= Closing balance</th><th class="n ${closing >= 0 ? 'blu' : 'exp'}" style="font-size:18px">${inr(closing)}</th></tr></table></div>
-    <details class="card"><summary style="font-weight:700;cursor:pointer">📊 Breakup by type</summary><table style="margin-top:6px"><tr><th>Type</th><th class="n">In</th><th class="n">Out</th></tr>
-      ${Object.entries(G).sort((x,y) => (y[1].in+y[1].out) - (x[1].in+x[1].out)).map(([g, v]) => `<tr><td>${esc(g)}</td><td class="n inc">${v.in ? inr(v.in) : ''}</td><td class="n exp">${v.out ? inr(v.out) : ''}</td></tr>`).join('') || '<tr><td colspan="3" class="empty">No entries</td></tr>'}</table></details>
-    <div style="display:flex;justify-content:space-between;align-items:center;margin:4px 2px 6px"><b style="font-size:13px">${L.length} entries${F.g ? ' · ' + esc(F.g) : ''}</b><button class="btn s o" onclick="A.bankCsv()">⬇ CSV</button></div>
+    <details class="card" ${F.g ? 'open' : ''}><summary style="font-weight:700;cursor:pointer">📊 Breakup by type${F.g ? ' · ' + esc(F.g) : ''}</summary><table style="margin-top:6px"><tr><th>Type</th><th class="n">In</th><th class="n">Out</th></tr>
+      ${(S._bg = Object.entries(G).sort((x,y) => (y[1].in+y[1].out) - (x[1].in+x[1].out))).map(([g, v], i) => `<tr onclick="A.bkg(${i})" style="cursor:pointer;${F.g === g ? 'background:#fef3c7;font-weight:700' : ''}"><td>${esc(g)} ›</td><td class="n inc">${v.in ? inr(v.in) : ''}</td><td class="n exp">${v.out ? inr(v.out) : ''}</td></tr>`).join('') || '<tr><td colspan="3" class="empty">No entries</td></tr>'}</table>
+      ${F.g ? `<button class="btn s o" style="width:100%;margin-top:6px" onclick="A.bk2({g:''})">✕ Show all types</button>` : '<div style="font-size:11px;color:var(--mu);margin-top:4px">Tap a type to see only those entries</div>'}</details>
+    <div id="bkList" style="display:flex;justify-content:space-between;align-items:center;margin:4px 2px 6px"><b style="font-size:13px">${L.length} entries${F.g ? ' · ' + esc(F.g) + ` · ${inr(Math.abs(sum(L, m => m.v)))}` : ''}</b><span>${F.g ? `<button class="btn s o" onclick="A.bk2({g:''})">✕ All</button> ` : ''}<button class="btn s o" onclick="A.bankCsv()">⬇ CSV</button></span></div>
     <div class="card" style="padding:6px">${L.length ? [...L].reverse().map(m => `<div class="item" onclick="${m.id ? `A.editTx('${m.id}')` : `A.loan('${m.loan}')`}">
         <div class="av" style="background:${m.v > 0 ? '#dcfce7' : '#fee2e2'}">${m.v > 0 ? '⬇️' : '⬆️'}</div>
         <div class="mid"><div class="t">${esc(m.t)}</div><div class="s">${fd(m.d)} · ${esc(m.g)}${m.mode ? ' · ' + esc(m.mode) : ''}</div></div>
         <div class="amt ${m.v > 0 ? 'inc' : 'exp'}">${m.v > 0 ? '+' : '−'}${inr(Math.abs(m.v))}<small style="color:var(--mu)">Bal ${inr(m.run)}</small></div></div>`).join('') : '<div class="empty">No bank entries</div>'}</div>
+    <h2>🏦 Loans</h2>
+    <div class="card"><div style="display:flex;justify-content:space-between;align-items:center"><b>Open loans</b><span><button class="btn s o" onclick="A.bankIn('loan')">+ Loan</button> <button class="btn s" onclick="A.bankOut('emi')">Pay EMI</button></span></div>
+      ${loans.length ? loans.map(({l, s}) => `<div class="item" onclick="A.loan('${l.id}')"><div class="mid"><div class="t">${esc(l.lender)}</div><div class="s">${esc(l.kind)}${l.emi ? ' · EMI ' + inr(l.emi) : ''} · interest paid ${inr(s.ip)}</div></div><div class="amt exp">${inr(s.out)}<small>outstanding</small></div></div>`).join('') + `<div style="text-align:right;font-size:13px;margin-top:4px">Total outstanding: <b class="exp">${inr(sum(loans, x => x.s.out))}</b></div>` : '<div class="empty" style="padding:10px">No open loans</div>'}</div>
     <button class="btn s o" style="width:100%;margin-top:6px" onclick="A.opening()">⚙️ Opening balance</button>`;
   },
 
@@ -1792,6 +1794,7 @@ window.A = {
   money: () => A.go('bank'),   // one page: Bank Ledger (net worth summary removed)
   acct: a => acctStatement(a),
   bk2(o){ Object.assign(S.bk2, o); render(); },
+  bkg(i){ const g = (S._bg[i] || [])[0] || ''; S.bk2.g = S.bk2.g === g ? '' : g; render(); setTimeout(() => { const e = document.querySelector('#bkList'); if (e) e.scrollIntoView({behavior:'smooth'}); }, 50); },
   ownMore(){ const big = (fn, bg, ic, t, sub) => `<button type="button" onclick="${fn}" style="display:flex;gap:12px;align-items:center;width:100%;text-align:left;border:0;border-radius:14px;padding:14px;margin-bottom:8px;background:${bg};font:inherit;color:var(--tx)"><span style="font-size:28px">${ic}</span><span><b>${t}</b><br><span style="font-size:12px;color:var(--mu)">${sub}</span></span></button>`;
     openSheet('More bank entries', big("A.own('capital')", '#dcfce7', '💼', 'Own Money Added', 'Your / family money put into the business') + big("A.own('asset')", '#fef3c7', '🚜', 'Buy Machine / Asset', 'Machine, trolley, shed, land bought from bank')
       + big("A.close();A.go('loans')", '#dbeafe', '🏦', 'Loan / EMI', 'Add a new loan or pay an EMI') + big("A.close();A.opening()", '#f1f5f9', '⚙️', 'Opening Balance', 'Set your bank balance on the start date')); },
