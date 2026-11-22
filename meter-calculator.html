@@ -1,0 +1,105 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1">
+<meta name="theme-color" content="#14532d">
+<meta name="color-scheme" content="light only">
+<title>NAYAK AGRO · Meter Calculator</title>
+<style>
+:root{color-scheme:light only;--g:#14532d;--y:#f59e0b;--bg:#f8faf7;--tx:#1f2937;--mu:#6b7280;--bd:#e5e7eb}
+*{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+body{margin:0;font-family:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;background:var(--bg);color:var(--tx)}
+header{background:var(--g);color:#fff;padding:14px 16px;display:flex;align-items:center;gap:10px}
+header .logo{width:38px;height:38px;border-radius:10px;background:#fff;color:var(--g);font-weight:900;display:grid;place-items:center;font-size:20px}
+header h1{margin:0;font-size:18px;letter-spacing:1px}header small{opacity:.85;font-size:12px}
+main{max-width:480px;margin:auto;padding:14px}
+.card{background:#fff;border-radius:16px;padding:14px;margin-bottom:12px;box-shadow:0 1px 4px #0001}
+label{display:block;font-size:13px;color:var(--mu);margin-bottom:10px}
+input{width:100%;font:inherit;font-size:24px;font-weight:800;padding:12px;border:2px solid var(--bd);border-radius:12px;margin-top:4px;color:var(--tx)}
+input:focus{outline:none;border-color:var(--g)}
+.row{display:flex;gap:10px}.row>*{flex:1}
+.out{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+.box{border-radius:14px;padding:14px;text-align:center}
+.box span{font-size:12px;color:var(--mu);display:block}.box b{font-size:28px;display:block;margin-top:4px}
+.hm{background:#dcfce7;color:var(--g)}.mn{background:#fef3c7;color:#92400e}
+.amt{background:#dbeafe;color:#1e40af;grid-column:1/-1}
+.err{color:#dc2626;font-size:14px;font-weight:600;min-height:18px;margin-top:6px}
+.note{font-size:12px;color:var(--mu);line-height:1.5}
+button{border:0;border-radius:12px;padding:12px;font:inherit;font-weight:700;font-size:15px;cursor:pointer}
+.btn{background:var(--g);color:#fff;width:100%}.btn2{background:#fff;color:var(--g);border:1.5px solid var(--g)}
+.hist div{display:flex;justify-content:space-between;padding:8px 0;border-bottom:1px solid var(--bd);font-size:14px}
+.hist div:last-child{border:0}
+footer{text-align:center;font-size:11px;color:var(--mu);padding:10px 0 20px}
+</style>
+</head>
+<body>
+<header><div class="logo">N</div><div><h1>NAYAK AGRO</h1><small>Hour Meter Calculator · 0.1 = 6 min</small></div></header>
+<main>
+  <div class="card">
+    <div class="row">
+      <label>Start meter<input id="s" inputmode="decimal" placeholder="51.7" autocomplete="off"></label>
+      <label>End meter<input id="e" inputmode="decimal" placeholder="53.1" autocomplete="off"></label>
+    </div>
+    <label>Rate ₹ per hour <small>(optional)</small><input id="r" inputmode="decimal" placeholder="2400" style="font-size:20px"></label>
+    <div class="err" id="err"></div>
+  </div>
+
+  <div class="out">
+    <div class="box hm"><span>Hours &amp; Minutes</span><b id="o1">–</b></div>
+    <div class="box mn"><span>Only Minutes</span><b id="o2">–</b></div>
+    <div class="box amt" id="amtBox" style="display:none"><span>Amount</span><b id="o3">–</b></div>
+  </div>
+
+  <div class="row" style="margin-top:12px">
+    <button class="btn2" onclick="clearAll()">Clear</button>
+    <button class="btn" onclick="save()">Save to list</button>
+  </div>
+
+  <div class="card hist" id="hist" style="margin-top:12px;display:none"></div>
+
+  <div class="card note">
+    <b>How the meter works:</b> every 0.1 on the meter = 6 minutes (1.0 = 60 min).<br>
+    Example: 51.7 → 53.1 = 1.4 = <b>1 hr 24 min</b> = <b>84 min</b>.<br>
+    51.9 = 51 hr 54 min · after 6 min it becomes 52.0.
+  </div>
+</main>
+<footer>NAYAK AGRO · Anup Sagar Nayak · 6370961772<br>At Baikunthapur, Po Kuanarpur, Rambag, Jajpur, Odisha</footer>
+
+<script>
+const $ = id => document.getElementById(id);
+const inr = n => '₹' + Math.round(n).toLocaleString('en-IN');
+// meter value -> minutes, using tenths so there is no decimal error (51.7 -> 517 tenths -> 3102 min)
+const toMin = v => Math.round(parseFloat(v) * 600) / 10;
+let last = null;
+
+function calc(){
+  const s = $('s').value.trim(), e = $('e').value.trim(), r = parseFloat($('r').value) || 0;
+  $('err').textContent = ''; last = null;
+  if (!s || !e || isNaN(+s) || isNaN(+e)) { $('o1').textContent = '–'; $('o2').textContent = '–'; $('amtBox').style.display = 'none'; return; }
+  const mins = Math.round(toMin(e) - toMin(s));
+  if (mins < 0) { $('err').textContent = 'End meter is smaller than start meter'; $('o1').textContent = '–'; $('o2').textContent = '–'; $('amtBox').style.display = 'none'; return; }
+  const h = Math.floor(mins / 60), m = mins % 60;
+  $('o1').textContent = `${h} hr ${m} min`;
+  $('o2').textContent = `${mins} min`;
+  if (r > 0) { $('amtBox').style.display = ''; $('o3').textContent = inr(mins / 60 * r) + `  (@ ₹${r}/hr)`; } else $('amtBox').style.display = 'none';
+  last = {s, e, h, m, mins, amt: r > 0 ? mins / 60 * r : 0};
+}
+['s','e','r'].forEach(id => $(id).addEventListener('input', calc));
+
+let list = [];
+try { list = JSON.parse(localStorage.getItem('nayak_meter') || '[]'); } catch (x) {}
+function draw(){
+  $('hist').style.display = list.length ? '' : 'none';
+  const tot = list.reduce((a, x) => a + x.mins, 0), totAmt = list.reduce((a, x) => a + x.amt, 0);
+  $('hist').innerHTML = '<b>Saved readings</b>' + list.map((x, i) =>
+    `<div><span>${x.s} → ${x.e}</span><span>${x.h}h ${x.m}m · ${x.mins} min${x.amt ? ' · ' + inr(x.amt) : ''} <a href="#" onclick="del(${i});return false" style="color:#dc2626;text-decoration:none">✕</a></span></div>`).join('')
+    + `<div style="font-weight:800"><span>TOTAL</span><span>${Math.floor(tot/60)}h ${tot%60}m · ${tot} min${totAmt ? ' · ' + inr(totAmt) : ''}</span></div>`;
+}
+function save(){ if (!last) return; list.push(last); localStorage.setItem('nayak_meter', JSON.stringify(list)); draw(); $('s').value = $('e').value; $('e').value = ''; calc(); $('e').focus(); }
+function del(i){ list.splice(i, 1); localStorage.setItem('nayak_meter', JSON.stringify(list)); draw(); }
+function clearAll(){ $('s').value = ''; $('e').value = ''; calc(); if (list.length && confirm('Also clear saved list?')) { list = []; localStorage.removeItem('nayak_meter'); draw(); } }
+draw();
+</script>
+</body>
+</html>
