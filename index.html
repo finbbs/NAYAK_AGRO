@@ -262,7 +262,12 @@ function moneyMoves(){
     else if (t.type === 'asset') add(t.mode, -a, t.date, t.createdAt, `Bought — ${mName(t.machineId) || t.category || 'asset'}${t.note ? ' (' + t.note + ')' : ''}`, 'Machines / assets bought', ref);
     else if (t.type === 'drawing') add(t.mode, -a, t.date, t.createdAt, `Personal use${t.category ? ' — ' + t.category : ''}`, 'Personal / family use', ref);
     /* cash <-> bank transfers: same account now, nothing to add */ }
-  for (const l of DB.loans) if (loanMode(l) !== 'Paid to dealer directly') add(loanMode(l), num(l.principal), l.date, l.createdAt, `Loan taken — ${l.lender}`, 'Loans taken', {loan: l.id});
+  for (const l of DB.loans) {
+    if (loanMode(l) !== 'Paid to dealer directly') add(loanMode(l), num(l.principal), l.date, l.createdAt, `Loan taken — ${l.lender}`, 'Loans taken', {loan: l.id});
+    else {   // shown in ledger for clarity: comes in and goes straight to dealer → balance unchanged
+      add('Bank', num(l.principal), l.date, l.createdAt, `Loan taken — ${l.lender} (paid to dealer)`, 'Loans taken', {loan: l.id});
+      add('Bank', -num(l.principal), l.date, (l.createdAt || 0) + 1, `Paid to dealer${l.machineId ? ' — ' + mName(l.machineId) : ''} (from ${l.lender} loan)`, 'Machines / assets bought', {loan: l.id}); }
+  }
   for (const p of DB.loanPays) { const l = DB.loans.find(x => x.id === p.loanId) || {}; add(p.mode, -num(p.amount), p.date, p.createdAt, `EMI / repayment — ${l.lender || ''}`, 'Loan EMI / repayment', {loan: p.loanId}); }
   return out;
 }
@@ -380,7 +385,7 @@ function machineStats(id){ let i = 0, e = 0; DB.txns.forEach(t => { if (t.machin
 /* ---------- UI state & render ---------- */
 const S = { tab:'home', period: curMonth(), bf:{type:'', machine:'', party:'', q:''}, pq:'', dueOnly:false, bkStatus:'Booked', bkMachine:'', fullSum:false, bk2:{g:'', q:''}, ie:{view:'both', src:'', machine:'', cat:''} };
 let rq = 0; function schedule(){ if (!rq) rq = requestAnimationFrame(() => { rq = 0; render(); }); }
-const FAB_TABS = ['home','book','ie','parties','loans','machines','leases','bookings'];
+const FAB_TABS = ['home','book','ie','bank','parties','loans','machines','leases','bookings'];
 function render(){
   const v = $('#view'); if (!v) return;
   const ae = document.activeElement, aid = ae && v.contains(ae) && ae.id, pos = aid && ae.selectionStart;
@@ -529,6 +534,9 @@ const VIEWS = {
     const groups = Object.keys(G).sort();
     return `<button class="back noprint" onclick="A.go('home')">‹ Back</button>
     <h2 style="margin-top:0">🏦 Bank Ledger</h2>
+    <div class="card" style="padding:10px"><div style="font-size:12px;color:var(--mu);margin-bottom:6px">Add entry — it appears in this ledger instantly</div>
+      <div class="btns" style="margin-bottom:6px"><button class="btn s" onclick="A.newTx('income')">⬇️ Income</button><button class="btn s r" onclick="A.newTx('expense')">⬆️ Expense</button><button class="btn s b" onclick="A.newTx('receipt')">💰 Received</button></div>
+      <div class="btns"><button class="btn s y" onclick="A.newTx('payment')">💸 Paid Out</button><button class="btn s" style="background:#db2777" onclick="A.own('drawing')">🏠 Personal</button><button class="btn s o" onclick="A.ownMore()">More ▾</button></div></div>
     ${!o.asOf ? `<div class="card" style="background:#fef3c7;font-size:13px">⚠ <b>Opening balance not set.</b> Set your real bank balance on the date of your first entry, otherwise the balance can go minus. <button class="btn s y" style="margin-top:6px" onclick="A.opening()">Set opening balance</button></div>` : ''}
     <div class="filters">${periodSel()}
       <select onchange="A.bk2({g:this.value})"><option value="">All types</option>${groups.map(g => `<option ${F.g===g?'selected':''}>${esc(g)}</option>`).join('')}</select></div>
@@ -1569,7 +1577,7 @@ window.A = {
   bookMachine(id){ S.bf = {type:'', machine:id, party:'', q:''}; A.go('book'); },
   pq(v){ S.pq = v; render(); },
   dueOnly(force){ S.dueOnly = force === true ? true : !S.dueOnly; render(); },
-  fab(){ ({home:entryChooser, book:entryChooser, ie:entryChooser, parties:()=>partyForm(), loans:()=>loanForm(), machines:()=>machineForm(), leases:()=>leaseForm(), bookings:()=>bookingForm()}[S.tab] || (()=>{}))(); },
+  fab(){ ({home:entryChooser, book:entryChooser, ie:entryChooser, bank:entryChooser, parties:()=>partyForm(), loans:()=>loanForm(), machines:()=>machineForm(), leases:()=>leaseForm(), bookings:()=>bookingForm()}[S.tab] || (()=>{}))(); },
   newTx(type, preset={}){ txForm(null, {type, ...preset}); },
   editTx(id){ const t = DB.txns.find(x => x.id === id); if (t) OWN.includes(t.type) ? ownForm(id) : HOLD.includes(t.type) ? holdTxForm(id) : txForm(id); },
   own: ty => ownForm(null, {type: ty}),
@@ -1577,6 +1585,9 @@ window.A = {
   money: () => moneySheet(),
   acct: a => acctStatement(a),
   bk2(o){ Object.assign(S.bk2, o); render(); },
+  ownMore(){ const big = (fn, bg, ic, t, sub) => `<button type="button" onclick="${fn}" style="display:flex;gap:12px;align-items:center;width:100%;text-align:left;border:0;border-radius:14px;padding:14px;margin-bottom:8px;background:${bg};font:inherit;color:var(--tx)"><span style="font-size:28px">${ic}</span><span><b>${t}</b><br><span style="font-size:12px;color:var(--mu)">${sub}</span></span></button>`;
+    openSheet('More bank entries', big("A.own('capital')", '#dcfce7', '💼', 'Own Money Added', 'Your / family money put into the business') + big("A.own('asset')", '#fef3c7', '🚜', 'Buy Machine / Asset', 'Machine, trolley, shed, land bought from bank')
+      + big("A.close();A.go('loans')", '#dbeafe', '🏦', 'Loan / EMI', 'Add a new loan or pay an EMI') + big("A.close();A.opening()", '#f1f5f9', '⚙️', 'Opening Balance', 'Set your bank balance on the start date')); },
   bankCsv(){ const o = opening(), [a, z] = range(S.period), all = moneyMoves().sort((x,y) => (x.d||'').localeCompare(y.d||'') || x.c - y.c);
     let run = num(o.cash) + num(o.bank); all.forEach(m => m.run = (run += m.v));
     const q = v => `"${String(v ?? '').replace(/"/g,'""')}"`, L = all.filter(m => (m.d||'') >= a && (m.d||'') <= z && (!S.bk2.g || m.g === S.bk2.g));
