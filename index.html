@@ -130,10 +130,10 @@ const SDK = "https://www.gstatic.com/firebasejs/10.12.2/";
 const COLS = ['machines','parties','txns','loans','loanPays','leases','bookings','meta'];
 const MAIN_TYPES = ['income','expense','receipt','payment'];
 const HOLD = ['advance','refund','adjust','forfeit'];   // advance (booking) / security deposit (lease) movements
-const OWN = ['drawing','capital','transfer'];   // own money: personal use, money added, cash<->bank
-const TYPE_LBL = {drawing:'Personal / Family Use',capital:'Own Money Added',transfer:'Cash ↔ Bank',income:'Income',expense:'Expense',receipt:'Received',payment:'Paid Out',advance:'Advance Received',refund:'Advance Refunded',adjust:'Advance Adjusted',forfeit:'Advance Kept'};
-const ICON = {drawing:'🏠',capital:'💼',transfer:'🔄',income:'🌾',expense:'⛽',receipt:'💰',payment:'💸',advance:'📥',refund:'↩️',adjust:'🔁',forfeit:'📌'};
-const TBG = {drawing:'#fce7f3',capital:'#dcfce7',transfer:'#f1f5f9',income:'#dcfce7',expense:'#fee2e2',receipt:'#dbeafe',payment:'#fef3c7',advance:'#e0e7ff',refund:'#fce7f3',adjust:'#f1f5f9',forfeit:'#dcfce7'};
+const OWN = ['drawing','capital','asset','transfer'];   // own money: personal use, money added, cash<->bank
+const TYPE_LBL = {asset:'Machine / Asset Purchase',drawing:'Personal / Family Use',capital:'Own Money Added',transfer:'Cash ↔ Bank',income:'Income',expense:'Expense',receipt:'Received',payment:'Paid Out',advance:'Advance Received',refund:'Advance Refunded',adjust:'Advance Adjusted',forfeit:'Advance Kept'};
+const ICON = {asset:'🚜',drawing:'🏠',capital:'💼',transfer:'🔄',income:'🌾',expense:'⛽',receipt:'💰',payment:'💸',advance:'📥',refund:'↩️',adjust:'🔁',forfeit:'📌'};
+const TBG = {asset:'#fef3c7',drawing:'#fce7f3',capital:'#dcfce7',transfer:'#f1f5f9',income:'#dcfce7',expense:'#fee2e2',receipt:'#dbeafe',payment:'#fef3c7',advance:'#e0e7ff',refund:'#fce7f3',adjust:'#f1f5f9',forfeit:'#dcfce7'};
 const holdLbl = t => t.leaseId ? TYPE_LBL[t.type].replace('Advance','Deposit') : TYPE_LBL[t.type];
 const BOOK_UNITS = ['Hour','Minute','Acre','Day','Trip','Season'];
 const CATS = {
@@ -259,6 +259,7 @@ function moneyMoves(){
     else if (t.type === 'capital') add(t.mode, a, t.date, t.createdAt, 'Own money added', 'Own money added', ref);
     else if (t.type === 'payment') add(t.mode, -a, t.date, t.createdAt, `Paid — ${who}`, 'Old dues paid to parties', ref);
     else if (t.type === 'refund') add(t.mode, -a, t.date, t.createdAt, `${holdLbl(t)} — ${who}`, 'Refunds', ref);
+    else if (t.type === 'asset') add(t.mode, -a, t.date, t.createdAt, `Bought — ${mName(t.machineId) || t.category || 'asset'}${t.note ? ' (' + t.note + ')' : ''}`, 'Machines / assets bought', ref);
     else if (t.type === 'drawing') add(t.mode, -a, t.date, t.createdAt, `Personal use${t.category ? ' — ' + t.category : ''}`, 'Personal / family use', ref);
     /* cash <-> bank transfers: same account now, nothing to add */ }
   for (const l of DB.loans) if (loanMode(l) !== 'Paid to dealer directly') add(loanMode(l), num(l.principal), l.date, l.createdAt, `Loan taken — ${l.lender}`, 'Loans taken', {loan: l.id});
@@ -271,7 +272,8 @@ function moneyBal(upto){   // cash & bank balance at end of date "upto" (or toda
   for (const m of moneyMoves()) if ((m.d || '') <= end) { if (m.acct === 'bank') bank += m.v; else cash += m.v; }
   return {cash, bank, total: cash + bank};
 }
-function acctStatement(acct){
+function acctStatement(acct){ closeSheet(); A.go('bank'); }
+function acctStatementOld(acct){
   const o = opening(), open = num(o.cash) + num(o.bank);
   const L = moneyMoves().filter(m => m.acct === acct).sort((a,b) => (a.d||'').localeCompare(b.d||'') || a.c - b.c);
   let run = open; L.forEach(m => m.run = (run += m.v));
@@ -296,21 +298,22 @@ function acctStatement(acct){
 }
 function netWorth(){
   const m = moneyBal(), {rec, pay, adv} = dueSplit();
-  const mach = sum(DB.machines, x => num(x.value) || num(x.cost)), loans = sum(DB.loans, l => loanStats(l).out);
+  const mach = sum(DB.machines, x => num(x.value) || num(x.cost)) + sum(DB.txns.filter(t => t.type === 'asset' && !t.machineId), t => num(t.amount)), loans = sum(DB.loans, l => loanStats(l).out);
   const assets = m.total + rec + mach, liab = loans + pay + adv;
   return {...m, rec, pay, mach, loans, adv, assets, liab, net: assets - liab};
 }
 function profitUse(p){   // where did the period's profit go
   const [a, b] = range(p), inP = d => (d||'') >= a && (d||'') <= b, r = summ(p);
   const draw = sum(DB.txns.filter(t => t.type === 'drawing' && inP(t.date)), t => num(t.amount));
+  const assetB = sum(DB.txns.filter(t => t.type === 'asset' && inP(t.date)), t => num(t.amount));
   const cap = sum(DB.txns.filter(t => t.type === 'capital' && inP(t.date)), t => num(t.amount));
   const prin = sum(DB.loanPays.filter(x => inP(x.date)), x => num(x.principal));
   const before = new Date(a); before.setDate(before.getDate() - 1);
   const o = opening(), ob = num(o.cash) + num(o.bank), dayB = before.toISOString().slice(0,10);
   const startBal = p === 'all' ? ob : dayB >= (o.asOf || '0000-00-00') ? moneyBal(dayB).total : (o.asOf && o.asOf <= b ? ob : 0);
   const endBal = moneyBal(b > today() ? today() : b).total;
-  const change = endBal - startBal, other = change - (r.profit + cap + r.loanIn - prin - draw);
-  return {profit: r.profit, draw, cap, prin, loanIn: r.loanIn, change, other, startBal, endBal};
+  const change = endBal - startBal, other = change - (r.profit + cap + r.loanIn - prin - draw - assetB);
+  return {profit: r.profit, draw, assetB, cap, prin, loanIn: r.loanIn, change, other, startBal, endBal};
 }
 const partyHeld = pid => sum(DB.txns.filter(t => t.partyId === pid && HOLD.includes(t.type)), holdVal);
 function bookingConflicts(b, selfId){
@@ -375,7 +378,7 @@ function machineAlerts(){
 function machineStats(id){ let i = 0, e = 0; DB.txns.forEach(t => { if (t.machineId === id) { if (t.type==='income') i += num(t.amount); if (t.type==='expense') e += num(t.amount); } }); return {i, e}; }
 
 /* ---------- UI state & render ---------- */
-const S = { tab:'home', period: curMonth(), bf:{type:'', machine:'', party:'', q:''}, pq:'', dueOnly:false, bkStatus:'Booked', bkMachine:'', fullSum:false, ie:{view:'both', src:'', machine:'', cat:''} };
+const S = { tab:'home', period: curMonth(), bf:{type:'', machine:'', party:'', q:''}, pq:'', dueOnly:false, bkStatus:'Booked', bkMachine:'', fullSum:false, bk2:{g:'', q:''}, ie:{view:'both', src:'', machine:'', cat:''} };
 let rq = 0; function schedule(){ if (!rq) rq = requestAnimationFrame(() => { rq = 0; render(); }); }
 const FAB_TABS = ['home','book','ie','parties','loans','machines','leases','bookings'];
 function render(){
@@ -393,7 +396,7 @@ const sub = (title) => `<button class="back noprint" onclick="A.go('more')">‹ 
 function txRow(t){
   const a = num(t.amount), due = (t.type==='income'||t.type==='expense') ? a - num(t.paid === '' ? a : t.paid) : 0;
   const plus = ['income','receipt','advance','forfeit','capital'].includes(t.type), neutral = t.type === 'adjust' || t.type === 'transfer';
-  const title = OWN.includes(t.type) ? (t.type === 'transfer' ? (t.dir === 'toCash' ? '🔄 Bank → Cash (withdrawal)' : '🔄 Cash → Bank (deposit)') : `${TYPE_LBL[t.type]}${t.category ? ' — ' + t.category : ''}`) : HOLD.includes(t.type) ? `${holdLbl(t)} — ${pName(t.partyId)||'?'}` : (t.type==='receipt'||t.type==='payment') ? `${TYPE_LBL[t.type]} — ${pName(t.partyId)||'?'}` : (t.category || TYPE_LBL[t.type]);
+  const title = OWN.includes(t.type) ? (t.type === 'transfer' ? (t.dir === 'toCash' ? '🔄 Bank → Cash (withdrawal)' : '🔄 Cash → Bank (deposit)') : t.type === 'asset' ? `🚜 Bought — ${mName(t.machineId) || t.category || 'Asset'}` : `${TYPE_LBL[t.type]}${t.category ? ' — ' + t.category : ''}`) : HOLD.includes(t.type) ? `${holdLbl(t)} — ${pName(t.partyId)||'?'}` : (t.type==='receipt'||t.type==='payment') ? `${TYPE_LBL[t.type]} — ${pName(t.partyId)||'?'}` : (t.category || TYPE_LBL[t.type]);
   const meta = [fd(t.date), mName(t.machineId), t.type==='income'||t.type==='expense' ? pName(t.partyId) : '', qtyText(t), t.mode].filter(Boolean).join(' · ');
   return `<div class="item" onclick="A.editTx('${t.id}')"><div class="av" style="background:${TBG[t.type]}">${ICON[t.type]}</div>
     <div class="mid"><div class="t">${esc(title)}</div><div class="s">${esc(meta)}${t.note?`<br>${esc(t.note)}`:''}</div></div>
@@ -443,7 +446,7 @@ const VIEWS = {
       ${stat('Income', inr(r.inc), 'inc', 'A.hd(\'income\')')}
       ${stat('Expenses' + (r.int ? ' + Interest' : ''), inr(r.exp + r.int), 'exp', 'A.hd(\'expense\')')}
       ${stat('To Receive', inr(rec), 'pen', 'A.hd(\'receive\')')}
-      ${stat('🏦 Bank / Balance', inr(MB.total), MB.total >= 0 ? 'blu' : 'exp', 'A.money()')}
+      ${stat('🏦 Bank / Balance', inr(MB.total), MB.total >= 0 ? 'blu' : 'exp', 'A.go(\'bank\')')}
     </div>
     <button class="btn s o" style="width:100%;margin-top:8px" onclick="A.fullSum()">${S.fullSum ? 'Hide Full Summary ▴' : 'Show Full Summary ▾'}</button>
     ${S.fullSum ? `<div class="grid" style="margin-top:8px">
@@ -512,6 +515,39 @@ const VIEWS = {
     ${closed.length ? `<h2>Closed</h2><div class="card">${closed.map(row).join('')}</div>` : ''}`;
   },
 
+  bank(){
+    const F = S.bk2, o = opening(), open = num(o.cash) + num(o.bank), [a, z] = range(S.period);
+    const all = moneyMoves().sort((x,y) => (x.d||'').localeCompare(y.d||'') || x.c - y.c);
+    let run = open; all.forEach(m => m.run = (run += m.v));
+    const before = (o.asOf && o.asOf > z ? 0 : open) + sum(all.filter(m => (m.d||'') < a), m => m.v);
+    const inP = all.filter(m => (m.d||'') >= a && (m.d||'') <= z);
+    const closing = before + sum(inP, m => m.v);
+    const q = F.q.toLowerCase();
+    const L = inP.filter(m => (!F.g || m.g === F.g) && (!q || (m.t + ' ' + (m.mode||'')).toLowerCase().includes(q)));
+    const inT = sum(inP.filter(m => m.v > 0), m => m.v), outT = -sum(inP.filter(m => m.v < 0), m => m.v);
+    const G = {}; inP.forEach(m => { (G[m.g] ||= {in:0, out:0}); if (m.v > 0) G[m.g].in += m.v; else G[m.g].out -= m.v; });
+    const groups = Object.keys(G).sort();
+    return `<button class="back noprint" onclick="A.go('home')">‹ Back</button>
+    <h2 style="margin-top:0">🏦 Bank Ledger</h2>
+    ${!o.asOf ? `<div class="card" style="background:#fef3c7;font-size:13px">⚠ <b>Opening balance not set.</b> Set your real bank balance on the date of your first entry, otherwise the balance can go minus. <button class="btn s y" style="margin-top:6px" onclick="A.opening()">Set opening balance</button></div>` : ''}
+    <div class="filters">${periodSel()}
+      <select onchange="A.bk2({g:this.value})"><option value="">All types</option>${groups.map(g => `<option ${F.g===g?'selected':''}>${esc(g)}</option>`).join('')}</select></div>
+    <input id="bkq" placeholder="🔍 Search name, item…" value="${esc(F.q)}" oninput="A.bk2({q:this.value})" style="margin-bottom:8px">
+    <div class="card"><table>
+      <tr><td>Opening balance ${S.period === 'all' ? (o.asOf ? '(' + fd(o.asOf) + ')' : '') : '(' + fd(a) + ')'}</td><td class="n">${inr(before)}</td></tr>
+      <tr><td>+ Money in</td><td class="n inc">${inr(inT)}</td></tr>
+      <tr><td>− Money out</td><td class="n exp">− ${inr(outT)}</td></tr>
+      <tr><th>= Closing balance</th><th class="n ${closing >= 0 ? 'blu' : 'exp'}" style="font-size:18px">${inr(closing)}</th></tr></table></div>
+    <details class="card"><summary style="font-weight:700;cursor:pointer">📊 Breakup by type</summary>
+      <table style="margin-top:6px"><tr><th>Type</th><th class="n">In</th><th class="n">Out</th></tr>
+      ${Object.entries(G).sort((x,y) => (y[1].in+y[1].out) - (x[1].in+x[1].out)).map(([g, v]) => `<tr onclick="A.bk2({g:'${esc(g).replace(/'/g,'&#39;')}'})" style="cursor:pointer"><td>${esc(g)} ›</td><td class="n inc">${v.in ? inr(v.in) : ''}</td><td class="n exp">${v.out ? inr(v.out) : ''}</td></tr>`).join('') || '<tr><td colspan="3" class="empty">No entries</td></tr>'}</table></details>
+    <div style="display:flex;justify-content:space-between;align-items:center;margin:4px 2px 6px"><b style="font-size:13px">${L.length} entries${F.g ? ' · ' + esc(F.g) : ''}</b><button class="btn s o" onclick="A.bankCsv()">⬇ CSV</button></div>
+    <div class="card" style="padding:6px">${L.length ? [...L].reverse().map(m => `<div class="item" onclick="${m.id ? `A.editTx('${m.id}')` : `A.loan('${m.loan}')`}">
+        <div class="av" style="background:${m.v > 0 ? '#dcfce7' : '#fee2e2'}">${m.v > 0 ? '⬇️' : '⬆️'}</div>
+        <div class="mid"><div class="t">${esc(m.t)}</div><div class="s">${fd(m.d)} · ${esc(m.g)}${m.mode ? ' · ' + esc(m.mode) : ''}</div></div>
+        <div class="amt ${m.v > 0 ? 'inc' : 'exp'}">${m.v > 0 ? '+' : '−'}${inr(Math.abs(m.v))}<small style="color:var(--mu)">Bal ${inr(m.run)}</small></div></div>`).join('') : '<div class="empty">No bank entries for this filter</div>'}</div>`;
+  },
+
   ie(){
     const F = S.ie, IN = ['income'], isLease = F.src.startsWith('lease');
     const srcOk = t => !F.src || (F.src === 'work' ? !t.leaseId && !!t.machineId : F.src === 'general' ? !t.machineId : F.src === 'lease' ? !!t.leaseId : t.leaseId === F.src.slice(6));
@@ -545,6 +581,7 @@ const VIEWS = {
   more(){
     return `<div class="tiles">
       <button class="tile" onclick="A.go('bookings')"><span class="i">📅</span>Bookings &amp; Advance</button>
+      <button class="tile" onclick="A.go('bank')"><span class="i">🏦</span>Bank Ledger</button>
       <button class="tile" onclick="A.go('book')"><span class="i">📒</span>Day Book (all entries)</button>
       <button class="tile" onclick="A.money()"><span class="i">💰</span>Bank / Balance &amp; Net Worth</button>
       <button class="tile" onclick="A.go('loans')"><span class="i">🏦</span>Loans &amp; EMI</button>
@@ -676,7 +713,7 @@ function entryChooser(){
     big("A.newTx('income')", '#dcfce7', '🆕', 'New Entry', 'New work done (Income) or new cost like diesel, repair, salary (Expense)') +
     big("A.newTx('receipt')", '#dbeafe', '⏳', 'Old Pending Payment', 'Money received from a party for old dues, or money paid for old dues') +
     big("A.close();A.newBooking()", '#e0e7ff', '📅', 'Booking / Advance', 'Book a machine for a future date and take advance') +
-    big("A.own('drawing')", '#fce7f3', '🏠', 'Personal / Own Money', 'Money taken for family use, or own money put into the business'));
+    big("A.own('drawing')", '#fce7f3', '🏠', 'Personal / Own Money / Buy Asset', 'Family use, own money put in, or buying a machine / asset from bank'));
 }
 
 /* ---------- Home card → full record list ---------- */
@@ -736,11 +773,13 @@ const DRAW_CATS = ['Household / Family','Personal','Function / Gift','Education'
 function ownForm(id, preset = {}){
   const t = id ? {...DB.txns.find(x => x.id === id)} : {type:'drawing', date:today(), mode:'UPI', dir:'toBank', ...preset};
   const f = openSheet(id ? 'Edit · Personal / Bank' : '🏠 Personal / Bank', `
-    <div class="seg" id="oseg">${(t.type === 'transfer' ? OWN : ['drawing','capital']).map(k => `<button type="button" data-v="${k}">${ICON[k]} ${k==='drawing'?'Personal Use':k==='capital'?'Money Added':'Cash↔Bank'}</button>`).join('')}</div>
+    <div class="seg" id="oseg">${(t.type === 'transfer' ? OWN : ['drawing','capital','asset']).map(k => `<button type="button" data-v="${k}">${ICON[k]} ${k==='drawing'?'Personal':k==='capital'?'Money Added':k==='asset'?'Buy Asset':'Cash↔Bank'}</button>`).join('')}</div>
     <input type="hidden" name="type" value="${t.type}">
     <div id="oInfo" style="font-size:12px;color:var(--mu);margin:-4px 0 8px"></div>
     <label>Date<input type="date" name="date" value="${esc(t.date)}"></label>
     <div class="o-dc"><label id="modeLbl">Paid from<select name="mode">${opts(MODES, t.mode)}</select></label></div>
+    <div class="o-a"><label>Machine bought <small>(leave blank for other things — land, shed, tools…)</small><select name="machineId">${machineOpts(t.machineId, '— Other asset —')}</select></label>
+      <label>What was bought (if not a machine)<input name="what" value="${esc(t.type === 'asset' && !t.machineId ? t.category || '' : '')}" placeholder="e.g. Trolley, shed, land"></label></div>
     <div class="o-d"><label>Used for<select name="category">${opts(DRAW_CATS, t.category)}</select></label></div>
     <div class="o-t"><label>Direction<select name="dir"><option value="toBank" ${t.dir!=='toCash'?'selected':''}>Cash → Bank (deposit)</option><option value="toCash" ${t.dir==='toCash'?'selected':''}>Bank → Cash (withdrawal)</option></select></label></div>
     <label>Amount ₹ *<input name="amount" inputmode="decimal" required value="${esc(t.amount||'')}" style="font-size:18px;font-weight:700"></label>
@@ -749,13 +788,14 @@ function ownForm(id, preset = {}){
   { onSave: d => {
       const a = num(d.amount); if (a <= 0) return toast('Enter amount'), false;
       const rec = {type:d.type, date:d.date, amount:a, note:d.note.trim(), partyId:'', machineId:'',
-        mode: d.type === 'transfer' ? '' : d.mode, category: d.type === 'drawing' ? d.category : '', dir: d.type === 'transfer' ? d.dir : ''};
+        mode: d.type === 'transfer' ? '' : d.mode, category: d.type === 'drawing' ? d.category : d.type === 'asset' && !d.machineId ? (d.what || '').trim() : '', dir: d.type === 'transfer' ? d.dir : ''};
+      if (d.type === 'asset') rec.machineId = d.machineId || '';
       id ? store.set('txns', id, rec) : store.add('txns', rec);
     }, onDelete: id ? () => store.del('txns', id) : null });
   const E = f.elements, INFO = {drawing:'Money taken from business for family / personal use. Not a business expense — profit stays same.',
-    capital:'Your own / family money put into the business (not a loan, not income).', transfer:'Moving money between cash in hand and bank. Nothing is earned or spent.'};
+    capital:'Your own / family money put into the business (not a loan, not income).', asset:'Money spent to BUY a machine or other asset. Not an expense — profit stays same; it goes into Net Worth as an asset.', transfer:'Moving money between cash in hand and bank. Nothing is earned or spent.'};
   const set = ty => { E.type.value = ty; f.querySelectorAll('#oseg button').forEach(b => b.classList.toggle('on', b.dataset.v === ty));
-    f.querySelector('.o-dc').classList.toggle('hidden', ty === 'transfer'); f.querySelector('.o-d').classList.toggle('hidden', ty !== 'drawing');
+    f.querySelector('.o-dc').classList.toggle('hidden', ty === 'transfer'); f.querySelector('.o-d').classList.toggle('hidden', ty !== 'drawing'); f.querySelector('.o-a').classList.toggle('hidden', ty !== 'asset');
     f.querySelector('.o-t').classList.toggle('hidden', ty !== 'transfer'); $('#modeLbl').firstChild.textContent = ty === 'capital' ? 'Received in' : 'Paid from';
     $('#oInfo').textContent = INFO[ty]; };
   f.querySelectorAll('#oseg button').forEach(b => b.onclick = () => set(b.dataset.v));
@@ -777,11 +817,12 @@ function moneySheet(){
   openSheet('💰 Bank / Balance & Net Worth', `
     <div class="grid" style="margin-bottom:8px">${stat('🏦 Bank / Balance', inr(N.bank), N.bank >= 0 ? 'blu' : 'exp', 'A.acct(\'bank\')')}${stat('📊 Net Worth', inr(N.net), N.net >= 0 ? 'inc' : 'exp')}</div>
     ${!o.asOf ? `<div class="card" style="background:#fef3c7;font-size:13px">⚠ Opening Bank / Balance not set — balance shown only from entries. <button type="button" class="btn s y" style="margin-top:6px" onclick="A.opening()">Set opening balance</button></div>` : ''}
+    <button type="button" class="btn" style="width:100%;margin-bottom:10px" onclick="A.acct('bank')">📒 Open Bank Ledger (all entries)</button>
     <div class="btns" style="margin-bottom:10px"><button type="button" class="btn s" style="background:#db2777" onclick="A.own('drawing')">🏠 Personal Use</button><button type="button" class="btn s" onclick="A.own('capital')">💼 Money Added</button></div>
     <h2>📊 Net Worth (today)</h2>
     <div class="card"><table>
       <tr><th colspan="2">What you HAVE</th></tr>
-      ${row('<a href="#" onclick="A.acct(\'bank\');return false">Bank / Balance ›</a>', inr(N.bank))}${row('Money to receive from parties', inr(N.rec))}${row('Machines value', inr(N.mach))}
+      ${row('<a href="#" onclick="A.acct(\'bank\');return false">Bank / Balance ›</a>', inr(N.bank))}${row('Money to receive from parties', inr(N.rec))}${row('Machines & assets value', inr(N.mach))}
       <tr><th>Total assets</th><th class="n inc">${inr(N.assets)}</th></tr>
       <tr><th colspan="2">What you OWE</th></tr>
       ${row('Loans outstanding', inr(N.loans))}${row('Money to pay (shops, staff…)', inr(N.pay))}${row('Advance from clients (work / rent still to give)', inr(N.adv))}
@@ -793,6 +834,7 @@ function moneySheet(){
       ${row('Net profit earned', inr(U.profit), U.profit >= 0 ? 'inc' : 'exp')}
       ${U.cap ? row('+ Own money added', inr(U.cap), 'inc') : ''}${U.loanIn ? row('+ New loans taken', inr(U.loanIn), 'inc') : ''}
       ${row('− Loan principal repaid', '− ' + inr(U.prin), 'exp')}
+      ${U.assetB ? row('− Machines / assets bought', '− ' + inr(U.assetB), 'exp') : ''}
       ${row('− Personal / family use', '− ' + inr(U.draw), 'exp')}
       ${row('± Dues not yet collected / advances / other', (U.other >= 0 ? '+ ' : '− ') + inr(Math.abs(U.other)))}
       <tr><th>= Increase in Bank / Balance</th><th class="n ${U.change >= 0 ? 'inc' : 'exp'}">${inr(U.change)}</th></tr></table>
@@ -958,6 +1000,7 @@ function machineForm(id){
     <label>Machine name *<input name="name" required placeholder="e.g. Harvester – Kartar 4000" value="${esc(m.name||'')}"></label>
     <div class="row"><label>Type<select name="type">${opts(MACHINE_TYPES, m.type)}</select></label><label>Reg. No.<input name="regNo" value="${esc(m.regNo||'')}"></label></div>
     <div class="row"><label>Purchase date<input type="date" name="purchaseDate" value="${esc(m.purchaseDate||'')}"></label><label>Purchase cost ₹<input name="cost" inputmode="decimal" value="${esc(m.cost||'')}"></label></div>
+    ${!id ? `<div class="row"><label>Paid from bank now ₹ <small>(down payment / full price you paid — reduces Bank)</small><input name="paidNow" inputmode="decimal" placeholder="0"></label></div>` : ''}
     <label>Current value ₹ <small>(resale value today — used for Net Worth; blank = purchase cost)</small><input name="value" inputmode="decimal" value="${esc(m.value||'')}"></label>
     <div class="row"><label>🛡 Insurance expiry<input type="date" name="insExpiry" value="${esc(m.insExpiry||'')}"></label><label>🔧 Next service date<input type="date" name="nextService" value="${esc(m.nextService||'')}"></label></div>
     <div style="font-size:11px;color:var(--mu);margin:-4px 0 8px">A red alert shows on Home 7 days before these dates.</div>
@@ -967,7 +1010,8 @@ function machineForm(id){
   { onSave: d => {
       if (!d.name.trim()) return toast('Enter machine name'), false;
       const rec = {name:d.name.trim(), type:d.type, regNo:d.regNo.trim(), purchaseDate:d.purchaseDate, cost:num(d.cost), value:num(d.value), insExpiry:d.insExpiry, nextService:d.nextService, note:d.note.trim()};
-      id ? store.set('machines', id, rec) : store.add('machines', rec);
+      if (id) store.set('machines', id, rec);
+      else { const mid = store.add('machines', rec); if (num(d.paidNow) > 0) store.add('txns', {type:'asset', machineId:mid, date:d.purchaseDate || today(), amount:num(d.paidNow), mode:'UPI', note:'Machine purchase', partyId:''}); }
     },
     onDelete: id ? () => { if (DB.txns.some(t => t.machineId === id)) { alert('This machine has entries. Delete those first.'); return; } store.del('machines', id); } : null });
 }
@@ -1324,20 +1368,36 @@ async function partyPdf(id){
 function sharePartyPdf(id){
   const c = pdfCache['p:' + id];
   if (!c) { toast('Preparing PDF… tap Share again in 2 seconds', 2500); preparePartyPdf(id).then(() => toast('PDF ready ✓ — tap Share again', 2500)).catch(e => alert(e.message)); return; }
-  const saveInstead = msg => { c.doc.save(c.name); toast(msg, 4500); };
-  if (!(navigator.canShare && navigator.canShare({files: [c.file]}))) return saveInstead('Share not supported — PDF saved to Downloads. Attach it in WhatsApp 📎');
-  navigator.share({files: [c.file], title: c.title}).catch(e => { if (e.name !== 'AbortError') saveInstead('Share blocked — PDF saved to Downloads. Attach it in WhatsApp 📎'); });
+  const p = party(id) || {}, ph = (p.phone||'').replace(/\D/g,'').slice(-10), b = partyBalances()[id] || 0;
+  const msg = `Namaskar ${p.name||''} ji 🙏\n${FIRM.name} – your account ledger attached.\n${b > 0.5 ? 'Balance to pay' : b < -0.5 ? 'Advance with us' : 'Account settled'}${Math.abs(b) > 0.5 ? ': ₹' + Math.round(Math.abs(b)).toLocaleString('en-IN') : ''}\n${FIRM.name} · ${FIRM.owner} · ${FIRM.phone}`;
+  if (noShare() || !(navigator.canShare && navigator.canShare({files: [c.file]}))) return shareFallback(c, ph, msg);
+  navigator.share({files: [c.file], title: c.title, text: msg}).catch(e => { if (e.name !== 'AbortError') shareFallback(c, ph, msg); });
 }
 async function ledgerPdf(lid){
   try { const c = pdfCache[lid] || (toast('Making PDF…', 1500), await preparePdf(lid)); c.doc.save(c.name); toast('PDF saved to Downloads ✓', 2500); }
   catch (e) { alert(e.message); }
 }
+/* When the phone blocks file sharing (common inside the installed APK): save PDF + open party's WhatsApp chat */
+function shareFallback(c, ph, msg){
+  try { localStorage.setItem('nayak_noshare', '1'); } catch (e) {}
+  c.doc.save(c.name);
+  const link = ph ? `https://wa.me/91${ph}?text=${encodeURIComponent(msg)}` : `https://wa.me/?text=${encodeURIComponent(msg)}`;
+  openSheet('📤 Send PDF on WhatsApp', `
+    <div class="card" style="background:#dcfce7;font-size:14px">✅ PDF saved to <b>Downloads</b><br><small>${esc(c.name)}</small></div>
+    <ol style="font-size:14px;line-height:1.7;padding-left:20px;margin:6px 0 12px">
+      <li>Tap the green button — WhatsApp chat opens with message ready</li>
+      <li>Tap <b>📎</b> → <b>Document</b></li>
+      <li>Pick <b>${esc(c.name)}</b> (top of the list) → Send</li></ol>
+    <a class="btn" style="display:block;background:#25d366;text-decoration:none;text-align:center" href="${link}" target="_blank">Open WhatsApp ${ph ? 'chat' : ''}</a>`);
+}
+const noShare = () => { try { return localStorage.getItem('nayak_noshare') === '1'; } catch (e) { return false; } };
 function sharePdf(lid){
   const c = pdfCache[lid];
   if (!c) { toast('Preparing PDF… tap Share PDF again in 2 seconds', 2500); preparePdf(lid).then(() => toast('PDF ready ✓ — tap Share PDF', 2500)).catch(e => alert(e.message)); return; }
-  const saveInstead = msg => { c.doc.save(c.name); toast(msg, 4500); };
-  if (!(navigator.canShare && navigator.canShare({files: [c.file]}))) return saveInstead('Share not supported — PDF saved to Downloads. Attach it in WhatsApp 📎');
-  navigator.share({files: [c.file], title: c.title}).catch(e => { if (e.name !== 'AbortError') saveInstead('Share blocked — PDF saved to Downloads. Attach it in WhatsApp 📎'); });
+  const l = DB.leases.find(x => x.id === lid) || {}, p = party(l.partyId) || {}, ph = (p.phone||'').replace(/\D/g,'').slice(-10), D = leaseLedgerData(lid);
+  const msg = `Namaskar ${p.name||''} ji 🙏\n${FIRM.name} – Lease Ledger (${mName(l.machineId)}) attached.\n${D && D.net >= 0 ? 'Amount to pay' : 'Advance with us'}: ₹${Math.round(Math.abs(D ? D.net : 0)).toLocaleString('en-IN')}\n${FIRM.name} · ${FIRM.owner} · ${FIRM.phone}`;
+  if (noShare() || !(navigator.canShare && navigator.canShare({files: [c.file]}))) return shareFallback(c, ph, msg);
+  navigator.share({files: [c.file], title: c.title, text: msg}).catch(e => { if (e.name !== 'AbortError') shareFallback(c, ph, msg); });
 }
 function printHtml(html, title){
   let pa = $('#printArea'); if (!pa) { pa = document.createElement('div'); pa.id = 'printArea'; document.body.appendChild(pa); }
@@ -1516,6 +1576,11 @@ window.A = {
   opening: () => openingForm(),
   money: () => moneySheet(),
   acct: a => acctStatement(a),
+  bk2(o){ Object.assign(S.bk2, o); render(); },
+  bankCsv(){ const o = opening(), [a, z] = range(S.period), all = moneyMoves().sort((x,y) => (x.d||'').localeCompare(y.d||'') || x.c - y.c);
+    let run = num(o.cash) + num(o.bank); all.forEach(m => m.run = (run += m.v));
+    const q = v => `"${String(v ?? '').replace(/"/g,'""')}"`, L = all.filter(m => (m.d||'') >= a && (m.d||'') <= z && (!S.bk2.g || m.g === S.bk2.g));
+    download(`NAYAK-bank-ledger-${S.period}.csv`, '\ufeff' + [['Date','Detail','Type','Mode','In','Out','Balance'].join(','), ...L.map(m => [fd(m.d), m.t, m.g, m.mode, m.v > 0 ? m.v : '', m.v < 0 ? -m.v : '', Math.round(m.run)].map(q).join(','))].join('\n'), 'text/csv'); },
   newBooking: (preset={}) => bookingForm(null, preset),
   booking: id => bookingView(id),
   editBooking: id => bookingForm(id),
