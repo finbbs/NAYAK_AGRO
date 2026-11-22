@@ -120,6 +120,7 @@ const FIREBASE_CONFIG = {
   appId: "1:807261361632:web:8abb08e4c4fb26b9610785",
   measurementId: "G-2BSZRZZWNN"
 };
+const FIRM = {name:'NAYAK AGRO', owner:'Anup Sagar Nayak', ownerU:'ANUP SAGAR NAYAK', phone:'6370961772'};
 const LOGIN_DOMAIN = "nayakagro.app";   // username "nayak" → nayak@nayakagro.app
 const BIZ = "nayak";                    // Firestore path: biz/nayak/<collection>
 const CLOUD = !!FIREBASE_CONFIG.apiKey;
@@ -212,13 +213,16 @@ const party = id => DB.parties.find(p => p.id === id);
 
 function range(p){
   if (p === 'all') return ['0000-00-00','9999-99-99'];
+  if (p === 'today') { const t = today(); return [t, t]; }
+  if (p === 'week') { const d = new Date(today()), st = new Date(d); st.setDate(d.getDate() - (d.getDay() + 6) % 7); const en = new Date(st); en.setDate(st.getDate() + 6);
+    return [st.toISOString().slice(0,10), en.toISOString().slice(0,10)]; }   // Monday – Sunday
   if (p.startsWith('fy')) { const y = +p.slice(2); return [`${y}-04-01`, `${y+1}-03-31`]; }
   return [p+'-01', p+'-31'];
 }
 const inRange = (d, p) => { const [a,b] = range(p); return (d||'') >= a && (d||'') <= b; };
 function periodOpts(){
   const d = new Date(), fy = d.getMonth() >= 3 ? d.getFullYear() : d.getFullYear() - 1;
-  const o = [['all','All Time'], ['fy'+fy, `FY ${fy}-${String(fy+1).slice(2)}`], ['fy'+(fy-1), `FY ${fy-1}-${String(fy).slice(2)}`]];
+  const o = [['today','Today'], ['week','This Week'], ['all','All Time'], ['fy'+fy, `FY ${fy}-${String(fy+1).slice(2)}`], ['fy'+(fy-1), `FY ${fy-1}-${String(fy).slice(2)}`]];
   for (let i = 0; i < 24; i++) { const m = new Date(d.getFullYear(), d.getMonth()-i, 1); o.push([`${m.getFullYear()}-${String(m.getMonth()+1).padStart(2,'0')}`, m.toLocaleString('en-IN',{month:'short',year:'numeric'})]); }
   return o;
 }
@@ -274,7 +278,7 @@ function acctStatement(acct){
   const inT = sum(L.filter(m => m.v > 0), m => m.v), outT = -sum(L.filter(m => m.v < 0), m => m.v);
   const G = {}; L.forEach(m => { (G[m.g] ||= {in:0, out:0}); if (m.v > 0) G[m.g].in += m.v; else G[m.g].out -= m.v; });
   const gRows = Object.entries(G).sort((a,b) => (b[1].in + b[1].out) - (a[1].in + a[1].out));
-  openSheet('🏦 Bank Statement', `
+  openSheet('🏦 Bank / Balance Statement', `
     <div class="card" style="background:${acct === 'bank' ? '#dbeafe' : '#dcfce7'}"><div style="font-size:12px;color:var(--mu)">Balance now (all money — UPI, bank, cash)</div><div class="big ${run >= 0 ? (acct === 'bank' ? 'blu' : 'inc') : 'exp'}">${inr(run)}</div></div>
     <div class="card"><table>
       <tr><td>Opening balance ${o.asOf ? '(' + fd(o.asOf) + ')' : '<span class="pen">(not set)</span>'}</td><td class="n">${inr(open)}</td></tr>
@@ -352,10 +356,24 @@ function summ(p){
   r.cash = r.cin + r.loanIn - r.cout - r.loanOut;
   return r;
 }
+function dieselStats(id){
+  const L = sum(DB.txns.filter(t => t.machineId === id && t.type === 'expense' && t.category === 'Diesel'), t => num(t.qty));
+  const hrs = sum(DB.txns.filter(t => t.machineId === id && t.type === 'income'), t => txMins(t)) / 60;
+  return {L, hrs, lph: L > 0 && hrs > 0 ? L / hrs : 0};
+}
+function machineAlerts(){
+  const lim = new Date(today()); lim.setDate(lim.getDate() + 7); const L = lim.toISOString().slice(0,10), T = today(), out = [];
+  DB.machines.forEach(m => [['insExpiry','Insurance'], ['nextService','Service']].forEach(([k, lbl]) => {
+    const d = m[k]; if (!d || d > L) return;
+    const days = Math.round((new Date(d) - new Date(T)) / 864e5);
+    out.push({m, k, text: days < 0 ? `${lbl} OVERDUE since ${fd(d)} (${-days} day${-days>1?'s':''})` : days === 0 ? `${lbl} due TODAY` : `${lbl} due in ${days} day${days>1?'s':''} (${fd(d)})`});
+  }));
+  return out;
+}
 function machineStats(id){ let i = 0, e = 0; DB.txns.forEach(t => { if (t.machineId === id) { if (t.type==='income') i += num(t.amount); if (t.type==='expense') e += num(t.amount); } }); return {i, e}; }
 
 /* ---------- UI state & render ---------- */
-const S = { tab:'home', period: curMonth(), bf:{type:'', machine:'', party:'', q:''}, pq:'', dueOnly:false, bkStatus:'Booked', bkMachine:'', ie:{view:'both', src:'', machine:'', cat:''} };
+const S = { tab:'home', period: curMonth(), bf:{type:'', machine:'', party:'', q:''}, pq:'', dueOnly:false, bkStatus:'Booked', bkMachine:'', fullSum:false, ie:{view:'both', src:'', machine:'', cat:''} };
 let rq = 0; function schedule(){ if (!rq) rq = requestAnimationFrame(() => { rq = 0; render(); }); }
 const FAB_TABS = ['home','book','ie','parties','loans','machines','leases','bookings'];
 function render(){
@@ -368,7 +386,7 @@ function render(){
   $('#fab').classList.toggle('hidden', !FAB_TABS.includes(S.tab));
 }
 const periodSel = (extra='') => `<select id="perSel" onchange="A.setPer(this.value)">${periodOpts().map(([k,l]) => `<option value="${k}" ${S.period===k?'selected':''}>${l}</option>`).join('')}</select>${extra}`;
-const sub = (title) => `<button class="back noprint" onclick="A.go('more')">‹ Back</button><h2 style="margin-top:0">${title}</h2>`;
+const sub = (title) => `<button class="back noprint" onclick="A.go('more')">‹ Back</button><h2 class="noprint" style="margin-top:0">${title}</h2>`;
 
 function txRow(t){
   const a = num(t.amount), due = (t.type==='income'||t.type==='expense') ? a - num(t.paid === '' ? a : t.paid) : 0;
@@ -377,7 +395,7 @@ function txRow(t){
   const meta = [fd(t.date), mName(t.machineId), t.type==='income'||t.type==='expense' ? pName(t.partyId) : '', qtyText(t), t.mode].filter(Boolean).join(' · ');
   return `<div class="item" onclick="A.editTx('${t.id}')"><div class="av" style="background:${TBG[t.type]}">${ICON[t.type]}</div>
     <div class="mid"><div class="t">${esc(title)}</div><div class="s">${esc(meta)}${t.note?`<br>${esc(t.note)}`:''}</div></div>
-    <div class="amt ${neutral?'':plus?'inc':'exp'}">${neutral?'':plus?'+':'−'}${inr(a)}${due>0.5?`<small class="pen">${t.type==='income'?'Due':'To pay'} ${inr(due)}</small>`:''}</div></div>`;
+    <div class="amt ${neutral?'':plus?'inc':'exp'}">${neutral?'':plus?'+':'−'}${inr(a)}${due>0.5?`<small class="pen">${t.leaseId ? (t.type==='income' ? 'In lease a/c' : 'Cut from rent') : (t.type==='income' ? 'Unpaid ' : 'On credit ') + inr(due)}</small>`:''}</div></div>`;
 }
 /* time worked in minutes — also works for old entries saved before minutes were stored */
 function txUnit(t){ if (t.unit) return t.unit; const l = t.leaseId && DB.leases.find(x => x.id === t.leaseId); return l && l.basis === 'Per Minute' ? 'min' : 'hr'; }
@@ -418,19 +436,24 @@ const VIEWS = {
     const mRows = Object.entries(r.byM).sort((a,b) => (b[1].i-b[1].e) - (a[1].i-a[1].e));
     return `<div class="filters">${periodSel()}</div>
     ${!DB.machines.length ? `<div class="card" style="background:#fef3c7"><b>Welcome to NAYAK Agro Ledger 🙏</b><p style="margin:6px 0 10px;font-size:13px">Start by adding your Harvester and Tractor, then record daily income &amp; expenses.</p><button class="btn s" onclick="A.go('machines');A.fab()">+ Add Machine</button></div>` : ''}
+    ${(() => { const al = machineAlerts(); return al.length ? `<div class="card" style="background:#fee2e2;border:1px solid #fca5a5"><b class="exp">⚠ Machine alerts</b>${al.map(x => `<div class="item" onclick="A.machine('${x.m.id}')" style="padding:6px 0"><div class="mid"><div class="t exp">${esc(x.m.name)}</div><div class="s" style="color:#991b1b">${esc(x.text)}</div></div><div class="amt" style="color:#991b1b">›</div></div>`).join('')}</div>` : ''; })()}
     <div class="grid">
-      ${stat('Income (Work Billed)', inr(r.inc), 'inc', 'A.hd(\'income\')')}
-      ${stat('Expenses + Interest', inr(r.exp + r.int), 'exp', 'A.hd(\'expense\')')}
+      ${stat('Income', inr(r.inc), 'inc', 'A.hd(\'income\')')}
+      ${stat('Expenses' + (r.int ? ' + Interest' : ''), inr(r.exp + r.int), 'exp', 'A.hd(\'expense\')')}
+      ${stat('To Receive', inr(rec), 'pen', 'A.hd(\'receive\')')}
+      ${stat('🏦 Bank / Balance', inr(MB.total), MB.total >= 0 ? 'blu' : 'exp', 'A.money()')}
+    </div>
+    <button class="btn s o" style="width:100%;margin-top:8px" onclick="A.fullSum()">${S.fullSum ? 'Hide Full Summary ▴' : 'Show Full Summary ▾'}</button>
+    ${S.fullSum ? `<div class="grid" style="margin-top:8px">
       ${stat('Net Profit', inr(r.profit), r.profit >= 0 ? 'inc' : 'exp', 'A.hd(\'profit\')')}
       ${stat('Net Cash Flow', inr(r.cash), r.cash >= 0 ? 'blu' : 'exp', 'A.hd(\'cash\')')}
-      ${stat('To Receive (all time)', inr(rec), 'pen', 'A.hd(\'receive\')')}
-      ${stat('To Pay (all time)', inr(DS.pay), 'exp', 'A.hd(\'pay\')')}
+      ${stat('To Pay', inr(DS.pay), 'exp', 'A.hd(\'pay\')')}
       ${stat('Loan Outstanding', inr(loanOut), 'exp', 'A.hd(\'loans\')')}
       ${stat('Advance from Clients', inr(DS.adv), 'blu', 'A.hd(\'advance\')')}
       ${stat('Open Bookings', upcoming.length, 'blu', 'A.hd(\'bookings\')')}
       ${stat('Active Leases', activeLease, 'blu', 'A.hd(\'leases\')')}
-      ${stat('🏦 Bank Balance', inr(MB.total), MB.total >= 0 ? 'blu' : 'exp', 'A.money()')}
       ${stat('📊 Net Worth', inr(netWorth().net), 'inc', 'A.money()')}
+    </div>` : ''}
     </div>
     <div class="btns" style="margin:12px 0">
       <button class="btn" onclick="A.newTx('income')">🌾 + Income</button>
@@ -520,7 +543,7 @@ const VIEWS = {
   more(){
     return `<div class="tiles">
       <button class="tile" onclick="A.go('bookings')"><span class="i">📅</span>Bookings &amp; Advance</button>
-      <button class="tile" onclick="A.money()"><span class="i">💰</span>Bank &amp; Net Worth</button>
+      <button class="tile" onclick="A.money()"><span class="i">💰</span>Bank / Balance &amp; Net Worth</button>
       <button class="tile" onclick="A.go('loans')"><span class="i">🏦</span>Loans &amp; EMI</button>
       <button class="tile" onclick="A.go('machines')"><span class="i">🚜</span>Machines</button>
       <button class="tile" onclick="A.go('reports')"><span class="i">📊</span>Reports</button>
@@ -532,7 +555,7 @@ const VIEWS = {
   machines(){
     return sub('🚜 Machines') + `<div class="card">${DB.machines.length ? DB.machines.map(m => { const s = machineStats(m.id), lease = DB.leases.find(l => l.machineId===m.id && l.status!=='Closed');
       return `<div class="item" onclick="A.machine('${m.id}')"><div class="av">${m.type==='Harvester'?'🌾':'🚜'}</div>
-        <div class="mid"><div class="t">${esc(m.name)} ${lease?'<span class="tag y">On Lease</span>':''}</div><div class="s">${esc([m.type,m.regNo].filter(Boolean).join(' · '))}<br>Income ${inr(s.i)} · Exp ${inr(s.e)}${num(m.cost) ? `<br>💰 Cost ${inr(m.cost)}${num(m.value) ? ` · Value now ${inr(m.value)}` : ''}` : '<br><span class="pen">⚠ Purchase cost not entered — tap to add</span>'}</div>
+        <div class="mid"><div class="t">${esc(m.name)} ${lease?'<span class="tag y">On Lease</span>':''}</div><div class="s">${esc([m.type,m.regNo].filter(Boolean).join(' · '))}<br>Income ${inr(s.i)} · Exp ${inr(s.e)}${(() => { const ds = dieselStats(m.id); return ds.lph ? `<br>⛽ <b>${ds.lph.toFixed(1)} L/hr</b> avg (${Math.round(ds.L)} L ÷ ${ds.hrs.toFixed(1)} hrs)` : ds.L ? `<br>⛽ ${Math.round(ds.L)} L diesel (no work hours yet)` : ''; })()}${(() => { const al = machineAlerts().filter(x => x.m.id === m.id); return (m.insExpiry || m.nextService) ? `<br><span class="${al.length ? 'exp' : ''}" style="${al.length ? 'font-weight:700' : ''}">${al.length ? '⚠ ' + al.map(x => x.text).join(' · ') : `🛡 Ins: ${m.insExpiry ? fd(m.insExpiry) : '—'} · 🔧 Service: ${m.nextService ? fd(m.nextService) : '—'}`}</span>` : ''; })()}${num(m.cost) ? `<br>💰 Cost ${inr(m.cost)}${num(m.value) ? ` · Value now ${inr(m.value)}` : ''}` : '<br><span class="pen">⚠ Purchase cost not entered — tap to add</span>'}</div>
           ${num(m.cost) ? `<div style="background:#e5e7eb;border-radius:6px;height:8px;margin-top:5px;overflow:hidden"><div style="height:8px;background:#16a34a;width:${Math.max(0, Math.min(100, (s.i-s.e)/num(m.cost)*100))}%"></div></div><div style="font-size:11px;color:var(--mu)">${Math.round((s.i-s.e)/num(m.cost)*100)}% of cost recovered from profit</div>` : ''}</div>
         <div class="amt ${s.i-s.e>=0?'inc':'exp'}">${inr(s.i-s.e)}<small>profit (all)</small></div></div>`; }).join('') : '<div class="empty">No machines yet. Tap + to add Harvester / Tractor.</div>'}</div>`;
   },
@@ -566,7 +589,7 @@ const VIEWS = {
     const r = summ(S.period), bal = partyBalances();
     const tbl = o => { const e = Object.entries(o).sort((a,b) => b[1]-a[1]); return e.length ? `<table>${e.map(([k,v]) => `<tr><td>${esc(k)}</td><td class="n">${inr(v)}</td></tr>`).join('')}<tr><th>Total</th><th class="n">${inr(sum(e, x => x[1]))}</th></tr></table>` : '<div class="empty">No data</div>'; };
     const dues = DB.parties.map(p => ({p, b: bal[p.id]||0})).filter(x => Math.abs(x.b) > 0.5).sort((a,b) => b.b - a.b);
-    return sub('📊 Reports') + `<div class="printhead"><h2>NAYAK Agro — Report: ${esc(periodLabel(S.period))}</h2></div>
+    return sub('📊 Reports') + `<div class="printhead" style="border-bottom:3px solid #14532d;padding-bottom:6px;margin-bottom:10px"><div style="display:flex;justify-content:space-between"><div><div style="font-size:24px;font-weight:900;color:#14532d;letter-spacing:2px">${FIRM.name}</div><div style="font-size:12px">Proprietor: ${FIRM.ownerU} &nbsp;|&nbsp; Mob: ${FIRM.phone}</div></div><div style="text-align:right"><b>REPORT</b><br><span style="font-size:12px">${esc(periodLabel(S.period))} · Printed ${fd(today())}</span></div></div></div>
     <div class="filters noprint">${periodSel()}</div>
     <div class="btns noprint" style="margin-bottom:10px"><button class="btn s" onclick="A.csv()">⬇ Export Entries (CSV)</button><button class="btn s o" onclick="window.print()">🖨 Print / PDF</button></div>
     <div class="card"><b>Profit &amp; Loss · ${esc(periodLabel(S.period))}</b><table>
@@ -586,7 +609,7 @@ const VIEWS = {
       ${[...DB.bookings.map(b => ({k:'bookingId', o:b, l:'Booking '+fd(b.from)+' · '+mName(b.machineId)})), ...DB.leases.map(l => ({k:'leaseId', o:l, l:'Lease deposit · '+mName(l.machineId)}))]
         .map(x => ({...x, h: heldOf(x.k, x.o.id)})).filter(x => x.h > 0.5).map(x => `<tr><td>${esc(x.l)}</td><td>${esc(pName(x.o.partyId))}</td><td class="n blu">${inr(x.h)}</td></tr>`).join('') || '<tr><td colspan="3" class="empty">Nothing held</td></tr>'}</table></div>
     <div class="card"><b>Loans</b><table><tr><th>Lender</th><th class="n">Principal</th><th class="n">Outstanding</th><th class="n">Int. paid</th></tr>
-      ${DB.loans.map(l => { const s = loanStats(l); return `<tr><td>${esc(l.lender)}<br><small>${esc(l.kind)}</small></td><td class="n">${inr(l.principal)}</td><td class="n exp">${inr(s.out)}</td><td class="n">${inr(s.ip)}</td></tr>`; }).join('') || '<tr><td colspan="4" class="empty">No loans</td></tr>'}</table></div>`;
+      ${DB.loans.map(l => { const s = loanStats(l); return `<tr><td>${esc(l.lender)}<br><small>${esc(l.kind)}</small></td><td class="n">${inr(l.principal)}</td><td class="n exp">${inr(s.out)}</td><td class="n">${inr(s.ip)}</td></tr>`; }).join('') || '<tr><td colspan="4" class="empty">No loans</td></tr>'}</table></div><div class="printhead" style="margin-top:50px;text-align:right"><div style="display:inline-block;border-top:1px solid #111;padding-top:4px;min-width:260px;text-align:center">For ${FIRM.name} (${FIRM.owner})</div></div>`;
   },
 
   settings(){
@@ -628,6 +651,16 @@ function wireNewParty(sel, kind='Client / Farmer'){
     const id = store.add('parties', {name, phone, village:'', kind, opening:0});
     const o = new Option(name, id, true, true); sel.insertBefore(o, sel.lastElementChild); sel.value = id; sel.dispatchEvent(new Event('input'));
   });
+}
+
+/* ---------- WhatsApp bill text for one income entry ---------- */
+function billMsg(t){
+  const a = num(t.amount), pd = t.paid === '' || t.paid == null ? a : num(t.paid), due = a - pd, bal = partyBalances()[t.partyId] || 0;
+  const R0 = n => Math.round(n).toLocaleString('en-IN'), mins = txMins(t);
+  const work = mins ? `${hm(mins)} (${mins} min) × ₹${R0(num(t.rate))}/${txUnit(t) === 'min' ? 'min' : 'hr'}` : t.qty ? `${t.qty} × ₹${R0(num(t.rate))}` : '';
+  return [`Namaskar ${pName(t.partyId)} ji 🙏`, `*${FIRM.name} – Bill*`, '', `Date: ${fd(t.date)}`, mName(t.machineId) ? `Machine: ${mName(t.machineId)}` : null,
+    `Work: ${t.category || 'Work'}${work ? ' · ' + work : ''}`, '', `*Total Bill: ₹${R0(a)}*`, `Paid Now: ₹${R0(pd)}`, `Balance Due: ₹${R0(due)}`,
+    bal > 0.5 && Math.abs(bal - due) > 0.5 ? `Total pending in your account: ₹${R0(bal)}` : null, '', 'Dhanyavad 🙏', `${FIRM.name} · ${FIRM.owner} · ${FIRM.phone}`].filter(x => x !== null).join('\n');
 }
 
 /* ---------- step 1: what kind of entry? ---------- */
@@ -721,29 +754,29 @@ function ownForm(id, preset = {}){
     f.querySelector('.o-t').classList.toggle('hidden', ty !== 'transfer'); $('#modeLbl').firstChild.textContent = ty === 'capital' ? 'Received in' : 'Paid from';
     $('#oInfo').textContent = INFO[ty]; };
   f.querySelectorAll('#oseg button').forEach(b => b.onclick = () => set(b.dataset.v));
-  const m = moneyBal(); $('#oBal').textContent = `Bank balance now: ${inr(m.bank)}`;
+  const m = moneyBal(); $('#oBal').textContent = `Bank / Balance now: ${inr(m.bank)}`;
   set(t.type);
 }
 function openingForm(){
   const o = opening();
-  openSheet('Opening Bank Balance', `
+  openSheet('Opening Bank / Balance', `
     <div class="card" style="background:#fef3c7;font-size:13px">Enter your <b>bank balance (plus any cash with you)</b> on the start date. Use the date of your first entry in this app, so everything adds up correctly.</div>
     <label>As on date<input type="date" name="asOf" value="${esc(o.asOf || (DB.txns.length ? [...DB.txns].sort(byDateAsc)[0].date : today()))}"></label>
-    <label>Bank balance ₹<input name="bank" inputmode="decimal" value="${esc(o.asOf ? num(o.cash) + num(o.bank) : '')}" style="font-size:18px;font-weight:700"></label>`,
+    <label>Bank / Balance ₹<input name="bank" inputmode="decimal" value="${esc(o.asOf ? num(o.cash) + num(o.bank) : '')}" style="font-size:18px;font-weight:700"></label>`,
   { onSave: d => { store.set('meta', 'opening', {asOf: d.asOf, cash: 0, bank: num(d.bank)}); } });
 }
 function moneySheet(){
   const N = netWorth(), U = profitUse(S.period), PL = periodLabel(S.period), o = opening();
   const draws = DB.txns.filter(t => OWN.includes(t.type) && inRange(t.date, S.period)).sort(byDateDesc);
   const row = (l, v, c='') => `<tr><td>${l}</td><td class="n ${c}">${v}</td></tr>`;
-  openSheet('💰 Bank & Net Worth', `
-    <div class="grid" style="margin-bottom:8px">${stat('🏦 Bank Balance', inr(N.bank), N.bank >= 0 ? 'blu' : 'exp', 'A.acct(\'bank\')')}${stat('📊 Net Worth', inr(N.net), N.net >= 0 ? 'inc' : 'exp')}</div>
-    ${!o.asOf ? `<div class="card" style="background:#fef3c7;font-size:13px">⚠ Opening bank balance not set — balance shown only from entries. <button type="button" class="btn s y" style="margin-top:6px" onclick="A.opening()">Set opening balance</button></div>` : ''}
+  openSheet('💰 Bank / Balance & Net Worth', `
+    <div class="grid" style="margin-bottom:8px">${stat('🏦 Bank / Balance', inr(N.bank), N.bank >= 0 ? 'blu' : 'exp', 'A.acct(\'bank\')')}${stat('📊 Net Worth', inr(N.net), N.net >= 0 ? 'inc' : 'exp')}</div>
+    ${!o.asOf ? `<div class="card" style="background:#fef3c7;font-size:13px">⚠ Opening Bank / Balance not set — balance shown only from entries. <button type="button" class="btn s y" style="margin-top:6px" onclick="A.opening()">Set opening balance</button></div>` : ''}
     <div class="btns" style="margin-bottom:10px"><button type="button" class="btn s" style="background:#db2777" onclick="A.own('drawing')">🏠 Personal Use</button><button type="button" class="btn s" onclick="A.own('capital')">💼 Money Added</button></div>
     <h2>📊 Net Worth (today)</h2>
     <div class="card"><table>
       <tr><th colspan="2">What you HAVE</th></tr>
-      ${row('<a href="#" onclick="A.acct(\'bank\');return false">Bank balance ›</a>', inr(N.bank))}${row('Money to receive from parties', inr(N.rec))}${row('Machines value', inr(N.mach))}
+      ${row('<a href="#" onclick="A.acct(\'bank\');return false">Bank / Balance ›</a>', inr(N.bank))}${row('Money to receive from parties', inr(N.rec))}${row('Machines value', inr(N.mach))}
       <tr><th>Total assets</th><th class="n inc">${inr(N.assets)}</th></tr>
       <tr><th colspan="2">What you OWE</th></tr>
       ${row('Loans outstanding', inr(N.loans))}${row('Money to pay (shops, staff…)', inr(N.pay))}${row('Advance from clients (work / rent still to give)', inr(N.adv))}
@@ -757,11 +790,11 @@ function moneySheet(){
       ${row('− Loan principal repaid', '− ' + inr(U.prin), 'exp')}
       ${row('− Personal / family use', '− ' + inr(U.draw), 'exp')}
       ${row('± Dues not yet collected / advances / other', (U.other >= 0 ? '+ ' : '− ') + inr(Math.abs(U.other)))}
-      <tr><th>= Increase in Bank</th><th class="n ${U.change >= 0 ? 'inc' : 'exp'}">${inr(U.change)}</th></tr></table>
+      <tr><th>= Increase in Bank / Balance</th><th class="n ${U.change >= 0 ? 'inc' : 'exp'}">${inr(U.change)}</th></tr></table>
       <div style="font-size:11px;color:var(--mu);margin-top:6px">Bank: start ${inr(U.startBal)} → end ${inr(U.endBal)}. Change the month at the top of Home to see another period.</div></div>
     <h2>🏠 Personal entries · ${esc(PL)}</h2>
     <div class="card">${draws.length ? draws.map(txRow).join('') : '<div class="empty">No personal / bank entries</div>'}</div>
-    <button type="button" class="btn s o" style="width:100%" onclick="A.opening()">⚙️ Opening bank balance</button>`);
+    <button type="button" class="btn s o" style="width:100%" onclick="A.opening()">⚙️ Opening Bank / Balance</button>`);
 }
 
 /* ---------- transaction form ---------- */
@@ -772,6 +805,8 @@ function txForm(id, preset = {}){
   const f = openSheet((id ? 'Edit · ' : '') + (pend ? '⏳ Old Pending Payment' : '🆕 New Work / New Cost'), `
     <div style="font-size:12px;color:var(--mu);margin:-4px 0 8px">${pend ? 'Settle an old balance. This does <b>not</b> change profit.' : 'New work done for a client, or a new cost for the business.'}</div>
     ${t.bookingId && !id ? `<div class="card" style="background:#e0e7ff;font-size:13px">📅 Bill for booking. Advance already received <b>${inr(bookingAdv(t.bookingId))}</b> is deducted automatically from this party's dues.</div>` : ''}
+    ${id && t.type === 'income' && t.partyId ? (() => { const ph = ((party(t.partyId)||{}).phone||'').replace(/\D/g,'').slice(-10);
+      return ph ? `<a class="btn s" style="display:block;background:#25d366;text-decoration:none;text-align:center;margin-bottom:10px" href="https://wa.me/91${ph}?text=${encodeURIComponent(billMsg(t))}" target="_blank">🟢 Share Bill on WhatsApp</a>` : `<div style="font-size:12px;color:var(--mu);margin-bottom:8px">Add the party's mobile number to share this bill on WhatsApp.</div>`; })() : ''}
     <div class="seg" id="tseg">${GROUP.map(k => `<button type="button" data-v="${k}">${ICON[k]} ${TYPE_LBL[k]}</button>`).join('')}</div>
     <input type="hidden" name="type" value="${t.type}"><input type="hidden" name="leaseId" value="${esc(t.leaseId||'')}"><input type="hidden" name="bookingId" value="${esc(t.bookingId||'')}">
     <div class="row"><label>Date<input type="date" name="date" value="${t.date}" required></label><label>Mode<select name="mode">${opts(MODES, t.mode)}</select></label></div>
@@ -779,8 +814,11 @@ function txForm(id, preset = {}){
     <div id="partyDue" style="font-size:12px;margin:-4px 0 8px"></div>
     <div class="ie"><label>Machine<select name="machineId">${machineOpts(t.machineId)}</select></label>
       <label>Category<select name="category"></select></label>
-      <div class="row" style="align-items:flex-end"><label>⏱ Time: Hours<input name="th" inputmode="numeric" placeholder="hr" value="${txMins(t) ? Math.floor(txMins(t)/60) : ''}"></label><label>Minutes<input name="tm" inputmode="numeric" placeholder="min" value="${txMins(t) ? Math.round(txMins(t)%60) : ''}"></label></div>
-      <div class="row"><label>Qty (hr / acre / trip)<input name="qty" inputmode="decimal" value="${esc(t.qty||'')}"></label><label>Rate ₹<input name="rate" inputmode="decimal" value="${esc(t.rate||'')}"></label></div>
+      <div id="timeBox"><div class="row" style="align-items:flex-end"><label>⏱ Time: Hours<input name="th" inputmode="numeric" placeholder="hr" value="${txMins(t) ? Math.floor(txMins(t)/60) : ''}"></label><label>Minutes<input name="tm" inputmode="numeric" placeholder="min" value="${txMins(t) ? Math.round(txMins(t)%60) : ''}"></label></div>
+      <details style="margin:-2px 0 8px"><summary style="font-size:12.5px;color:var(--g);font-weight:600;cursor:pointer">⏱ Calculate from Start / End time or meter</summary>
+        <div class="row" style="margin-top:6px"><label>Start time<input type="time" name="st"></label><label>End time<input type="time" name="et"></label></div>
+        <div class="row"><label>Start meter<input name="sm" inputmode="decimal" placeholder="e.g. 1250.5"></label><label>End meter<input name="em" inputmode="decimal" placeholder="e.g. 1254.2"></label></div></details></div>
+      <div class="row"><label><span id="qtyLbl">Qty (hr / acre / trip)</span><input name="qty" inputmode="decimal" value="${esc(t.qty||'')}"></label><label>Rate ₹<input name="rate" inputmode="decimal" value="${esc(t.rate||'')}"></label></div>
       <div id="timeInfo" style="font-size:12px;color:var(--mu);margin:-4px 0 8px">Per-hour work: fill Hours + Minutes, Qty fills itself</div></div>
     <label>Total Amount ₹<input name="amount" inputmode="decimal" required value="${esc(t.amount ?? '')}" style="font-size:18px;font-weight:700"></label>
     <div class="ie"><label><span id="paidLbl">Received now ₹</span><input name="paid" inputmode="decimal" value="${esc(t.paid ?? '')}" placeholder="Blank = full amount"></label>
@@ -796,7 +834,7 @@ function txForm(id, preset = {}){
       if (!ie && !d.partyId) return toast('Select party'), false;
       if (ie && paid < amount && !d.partyId) return toast('Select party to track pending amount'), false;
       const rec = { type:d.type, date:d.date, mode:d.mode, partyId:d.partyId, leaseId:d.leaseId||'', bookingId:d.bookingId||'', note: (() => { const rest = d.note.trim().replace(/^\d+ min( · )?/, ''), m = ie ? Math.round(num(d.th) * 60 + num(d.tm)) : 0;
-          return m ? [`${m} min`, rest].filter(Boolean).join(' · ') : rest; })(), amount, paid,
+          return m ? [`${m} min`, (d.sm && d.em && !rest.includes('meter') ? `meter ${d.sm}→${d.em}` : ''), rest].filter(Boolean).join(' · ') : rest; })(), amount, paid,
         machineId: ie ? d.machineId : '', category: ie ? d.category : TYPE_LBL[d.type], qty: ie ? d.qty : '', rate: ie ? d.rate : '',
         mins: ie && (num(d.th) || num(d.tm)) ? Math.round(num(d.th) * 60 + num(d.tm)) : '', unit: ie && (num(d.th) || num(d.tm)) ? (t.unit || 'hr') : '' };
       if (id) store.set('txns', id, rec);
@@ -804,12 +842,21 @@ function txForm(id, preset = {}){
     }, onDelete: id ? () => store.del('txns', id) : null });
   const E = f.elements;
   const upd = () => {
-    if (E.qty.value && E.rate.value && document.activeElement !== E.amount) E.amount.value = +(num(E.qty.value) * num(E.rate.value)).toFixed(2);
+    if (E.qty.value && E.rate.value && document.activeElement !== E.amount) {
+      const mins = E.type.value === 'income' ? num(E.th.value) * 60 + num(E.tm.value) : 0;   // exact minutes → no rounding error
+      E.amount.value = mins ? Math.round((txUnit(t) === 'min' ? mins : mins / 60) * num(E.rate.value)) : +(num(E.qty.value) * num(E.rate.value)).toFixed(2); }
     const ty = E.type.value, ie = ty === 'income' || ty === 'expense', a = num(E.amount.value);
     const due = ie && E.paid.value.trim() !== '' ? a - num(E.paid.value) : 0;
     $('#dueInfo').textContent = due > 0 ? `⏳ Pending: ${inr(due)} ${ty==='income'?'(party will owe you)':'(you will owe party)'}` : '';
     const pid = E.partyId.value, b = pid && pid !== '__new' ? (partyBalances()[pid]||0) : 0;
     $('#partyDue').innerHTML = pid && pid !== '__new' ? (b > 0.5 ? `<span class="pen">Current due from party: <b>${inr(b)}</b></span>` : b < -0.5 ? `<span class="exp">You owe this party: <b>${inr(-b)}</b></span>` : '<span class="inc">Party account settled</span>') : '';
+  };
+  /* hours/minutes only for income work (not for diesel, repair, salary…) */
+  const timeVis = () => {
+    const show = E.type.value === 'income' && E.category.value !== 'Advance Kept (Cancelled)';
+    $('#timeBox').classList.toggle('hidden', !show); $('#timeInfo').classList.toggle('hidden', !show);
+    if (!show) { E.th.value = ''; E.tm.value = ''; }
+    $('#qtyLbl').textContent = E.type.value === 'income' ? 'Qty (hr / acre / trip)' : E.category.value === 'Diesel' ? 'Litres' : 'Qty';
   };
   const setType = ty => {
     E.type.value = ty;
@@ -818,7 +865,7 @@ function txForm(id, preset = {}){
     f.querySelectorAll('.ie').forEach(x => x.classList.toggle('hidden', !ie));
     if (ie) { const cats = CATS[ty]; E.category.innerHTML = opts(cats.includes(t.category) ? cats : [...cats], t.category); }
     $('#paidLbl').textContent = ty === 'income' ? 'Received now ₹' : 'Paid now ₹';
-    upd();
+    timeVis(); upd();
   };
   f.querySelectorAll('#tseg button').forEach(b => b.onclick = () => setType(b.dataset.v));
   ['qty','rate','amount','paid','partyId'].forEach(n => E[n].addEventListener('input', upd));
@@ -826,6 +873,14 @@ function txForm(id, preset = {}){
     const pm = txUnit(t) === 'min'; E.qty.value = pm ? Math.round(mins) : +(mins / 60).toFixed(2);
     $('#timeInfo').textContent = `${hm(mins)} = ${E.qty.value} ${pm ? 'min' : 'hours'}`; upd(); };
   E.th.addEventListener('input', tUpd); E.tm.addEventListener('input', tUpd);
+  E.category.addEventListener('change', timeVis);
+  const fromStartEnd = () => {
+    let mins = 0;
+    if (E.st.value && E.et.value) { const [a1,b1] = E.st.value.split(':').map(Number), [a2,b2] = E.et.value.split(':').map(Number); mins = (a2*60+b2) - (a1*60+b1); if (mins < 0) mins += 1440; }
+    else if (E.sm.value && E.em.value) { const dif = num(E.em.value) - num(E.sm.value); if (dif > 0) mins = Math.round(dif * 60); }
+    if (mins > 0) { E.th.value = Math.floor(mins / 60); E.tm.value = mins % 60; tUpd(); }
+  };
+  ['st','et','sm','em'].forEach(n => E[n].addEventListener('input', fromStartEnd));
   E.qty.addEventListener('input', () => { if (E.th.value || E.tm.value) { E.th.value = ''; E.tm.value = ''; $('#timeInfo').textContent = 'Time cleared (qty typed manually)'; } });
   if (txMins(t)) $('#timeInfo').textContent = `${hm(txMins(t))} = ${t.qty} ${txUnit(t) === 'min' ? 'min' : 'hours'}`;
   E.partyId.addEventListener('change', () => {   // pending mode: fill full due automatically
@@ -882,10 +937,10 @@ function partyView(id){
       ${ph ? `<a class="btn s" style="background:#25d366;text-decoration:none;text-align:center" href="https://wa.me/91${ph}?text=${msg}" target="_blank">WhatsApp Reminder</a><a class="btn s o" style="text-decoration:none;text-align:center" href="tel:${ph}">📞 Call</a>` : ''}
       <button type="button" class="btn s o" onclick="A.editParty('${id}')">✏️ Edit</button>
       <button type="button" class="btn s o" onclick="A.close();A.bookParty('${id}')">📒 Entries</button></div>
-    <table><tr><th>Date</th><th>Detail</th><th class="n">Debit</th><th class="n">Credit</th><th class="n">Balance</th></tr>${rows}
+    <table><tr><th>Date</th><th>Detail</th><th class="n">Billed (+)</th><th class="n">Paid (−)</th><th class="n">Balance</th></tr>${rows}
       ${num(p.opening) ? `<tr><td></td><td>Opening balance</td><td colspan="2"></td><td class="n">${inr(p.opening)}</td></tr>` : ''}</table>
     ${!L.length ? '<div class="empty">No entries yet</div>' : ''}
-    <p style="font-size:11px;color:var(--mu)">Debit = billed to party / paid by you · Credit = received from party / billed by party / advance adjusted. Advance held is shown separately until it is adjusted against a bill.</p>`);
+    <p style="font-size:11px;color:var(--mu)">Billed (+) = work / rent billed to the party, or money you paid them · Paid (−) = money received from the party, their bill to you (diesel, repair…) or advance adjusted. Balance + = they owe you, − = advance with us / you owe them.</p>`);
 }
 
 /* ---------- machine ---------- */
@@ -896,11 +951,14 @@ function machineForm(id){
     <div class="row"><label>Type<select name="type">${opts(MACHINE_TYPES, m.type)}</select></label><label>Reg. No.<input name="regNo" value="${esc(m.regNo||'')}"></label></div>
     <div class="row"><label>Purchase date<input type="date" name="purchaseDate" value="${esc(m.purchaseDate||'')}"></label><label>Purchase cost ₹<input name="cost" inputmode="decimal" value="${esc(m.cost||'')}"></label></div>
     <label>Current value ₹ <small>(resale value today — used for Net Worth; blank = purchase cost)</small><input name="value" inputmode="decimal" value="${esc(m.value||'')}"></label>
-    <label>Note (insurance, service due…)<textarea name="note" rows="2">${esc(m.note||'')}</textarea></label>
+    <div class="row"><label>🛡 Insurance expiry<input type="date" name="insExpiry" value="${esc(m.insExpiry||'')}"></label><label>🔧 Next service date<input type="date" name="nextService" value="${esc(m.nextService||'')}"></label></div>
+    <div style="font-size:11px;color:var(--mu);margin:-4px 0 8px">A red alert shows on Home 7 days before these dates.</div>
+    ${id ? (() => { const ds = dieselStats(id); return ds.L ? `<div class="card" style="background:#fef3c7;font-size:13px">⛽ Diesel: <b>${Math.round(ds.L)} L</b> · Work: <b>${ds.hrs.toFixed(1)} hrs</b>${ds.lph ? ` · Avg <b>${ds.lph.toFixed(1)} L/hr</b>` : ''}</div>` : ''; })() : ''}
+    <label>Note<textarea name="note" rows="2">${esc(m.note||'')}</textarea></label>
     ${id ? `<button type="button" class="btn s o" style="width:100%;margin-bottom:6px" onclick="A.close();A.bookMachine('${id}')">📒 View this machine's entries</button>` : ''}`,
   { onSave: d => {
       if (!d.name.trim()) return toast('Enter machine name'), false;
-      const rec = {name:d.name.trim(), type:d.type, regNo:d.regNo.trim(), purchaseDate:d.purchaseDate, cost:num(d.cost), value:num(d.value), note:d.note.trim()};
+      const rec = {name:d.name.trim(), type:d.type, regNo:d.regNo.trim(), purchaseDate:d.purchaseDate, cost:num(d.cost), value:num(d.value), insExpiry:d.insExpiry, nextService:d.nextService, note:d.note.trim()};
       id ? store.set('machines', id, rec) : store.add('machines', rec);
     },
     onDelete: id ? () => { if (DB.txns.some(t => t.machineId === id)) { alert('This machine has entries. Delete those first.'); return; } store.del('machines', id); } : null });
@@ -1156,7 +1214,7 @@ async function ledgerPdfDoc(lid){
   const {l, p, rows, S, bal, held, net, depIn, depOut, depKept} = D;
   const jsPDF = await pdfLib(), doc = new jsPDF({unit:'mm', format:'a4'}), W = doc.internal.pageSize.getWidth(), G = [20,83,45];
   doc.setTextColor(...G); doc.setFont('helvetica','bold'); doc.setFontSize(22); doc.text('NAYAK AGRO', 14, 18);
-  doc.setFontSize(9); doc.setFont('helvetica','normal'); doc.setTextColor(90); doc.text('Harvester  .  Tractor  .  Lease', 14, 23);
+  doc.setFontSize(9); doc.setFont('helvetica','normal'); doc.setTextColor(60); doc.text(`Proprietor: ${FIRM.ownerU}   |   Mob: ${FIRM.phone}`, 14, 23);
   doc.setTextColor(0); doc.setFont('helvetica','bold'); doc.setFontSize(12); doc.text('LEASE LEDGER', W-14, 17, {align:'right'});
   doc.setFont('helvetica','normal'); doc.setFontSize(9); doc.text('Date: ' + fd(today()), W-14, 23, {align:'right'});
   doc.setDrawColor(...G); doc.setLineWidth(0.8); doc.line(14, 26, W-14, 26);
@@ -1193,7 +1251,7 @@ async function ledgerPdfDoc(lid){
   y = doc.lastAutoTable.finalY + 28; if (y > doc.internal.pageSize.getHeight() - 15) { doc.addPage(); y = 40; }
   doc.setFontSize(10); doc.setLineWidth(0.3); doc.setDrawColor(0);
   doc.line(14, y, 74, y); doc.text('Lessee signature', 44, y + 5, {align:'center'});
-  doc.line(W-74, y, W-14, y); doc.text('For NAYAK AGRO', W-44, y + 5, {align:'center'});
+  doc.line(W-84, y, W-14, y); doc.setFontSize(9); doc.text(`For ${FIRM.name} (${FIRM.owner})`, W-49, y + 5, {align:'center'});
   const pages = doc.getNumberOfPages();
   for (let i = 1; i <= pages; i++) { doc.setPage(i); doc.setFontSize(8); doc.setTextColor(120); doc.text(`Page ${i} of ${pages}`, W-14, doc.internal.pageSize.getHeight() - 8, {align:'right'}); }
   return {doc, name: `NAYAK-Lease-Ledger-${pt(p.name||'lessee').trim().replace(/\s+/g,'-')}-${today()}.pdf`, title: `Lease Ledger - ${pt(p.name||'')}`};
@@ -1399,6 +1457,7 @@ window.A = {
   holdNew: (key, id) => holdNew(key, id),
   settle: (key, id, cancel) => settleForm(key, id, !!cancel),
   bk(k, v){ S[k] = v; render(); },
+  fullSum(){ S.fullSum = !S.fullSum; render(); },
   ief(o){ Object.assign(S.ie, o); render(); },
   iefc(view, i){ Object.assign(S.ie, {view, cat: S._cats[i] || ''}); render(); },
   ieCsv(){ const F = S.ie;
