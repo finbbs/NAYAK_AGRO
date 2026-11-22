@@ -4,6 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,viewport-fit=cover">
 <meta name="theme-color" content="#14532d">
+<meta name="color-scheme" content="light only">
 <meta name="mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <link rel="manifest" href="manifest.json">
@@ -11,7 +12,7 @@
 <link rel="apple-touch-icon" href="icon-192.png">
 <title>NAYAK Agro Ledger</title>
 <style>
-:root{--g:#14532d;--g2:#166534;--gl:#dcfce7;--y:#f59e0b;--r:#dc2626;--b:#2563eb;--bg:#f4f6f3;--tx:#1f2937;--mu:#6b7280;--bd:#e5e7eb}
+:root{color-scheme:light only;--g:#14532d;--g2:#166534;--gl:#dcfce7;--y:#f59e0b;--r:#dc2626;--b:#2563eb;--bg:#f8faf7;--tx:#1f2937;--mu:#6b7280;--bd:#e5e7eb}
 *{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
 body{margin:0;font-family:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;background:var(--bg);color:var(--tx);font-size:15px}
 header{position:sticky;top:0;z-index:5;background:var(--g);color:#fff;padding:calc(10px + env(safe-area-inset-top)) 14px 10px;display:flex;align-items:center;gap:10px}
@@ -97,7 +98,6 @@ table{width:100%;border-collapse:collapse;font-size:13px}td,th{padding:7px 4px;b
   <button class="fab" id="fab" onclick="A.fab()">+</button>
   <nav id="nav">
     <button data-t="home" onclick="A.go('home')"><span class="i">🏠</span>Home</button>
-    <button data-t="book" onclick="A.go('book')"><span class="i">📒</span>Day Book</button>
     <button data-t="ie" onclick="A.go('ie')"><span class="i">📊</span>Inc / Exp</button>
     <button data-t="parties" onclick="A.go('parties')"><span class="i">👥</span>Parties</button>
     <button data-t="leases" onclick="A.go('leases')"><span class="i">📄</span>Lease</button>
@@ -356,10 +356,12 @@ function summ(p){
   r.cash = r.cin + r.loanIn - r.cout - r.loanOut;
   return r;
 }
+const dieselPrice = () => num((DB.meta.find(x => x.id === 'settings') || {}).dieselPrice) || 100;   // ₹ per litre, for entries saved without litres
 function dieselStats(id){
-  const L = sum(DB.txns.filter(t => t.machineId === id && t.type === 'expense' && t.category === 'Diesel'), t => num(t.qty));
+  const dp = dieselPrice(), D = DB.txns.filter(t => t.machineId === id && t.type === 'expense' && t.category === 'Diesel');
+  const L = sum(D, t => num(t.qty) > 0 ? num(t.qty) : num(t.amount) / dp), est = D.some(t => !(num(t.qty) > 0));
   const hrs = sum(DB.txns.filter(t => t.machineId === id && t.type === 'income'), t => txMins(t)) / 60;
-  return {L, hrs, lph: L > 0 && hrs > 0 ? L / hrs : 0};
+  return {L, hrs, est, dp, lph: L > 0 && hrs > 0 ? L / hrs : 0};
 }
 function machineAlerts(){
   const lim = new Date(today()); lim.setDate(lim.getDate() + 7); const L = lim.toISOString().slice(0,10), T = today(), out = [];
@@ -381,7 +383,7 @@ function render(){
   const ae = document.activeElement, aid = ae && v.contains(ae) && ae.id, pos = aid && ae.selectionStart;
   v.innerHTML = (VIEWS[S.tab] || VIEWS.home)();
   if (aid) { const n = document.getElementById(aid); if (n) { n.focus(); try { n.setSelectionRange(pos,pos); } catch(e){} } }
-  const navTab = ['machines','reports','settings','bookings','loans'].includes(S.tab) ? 'more' : S.tab;
+  const navTab = ['machines','reports','settings','bookings','loans','book'].includes(S.tab) ? 'more' : S.tab;
   document.querySelectorAll('#nav button').forEach(b => b.classList.toggle('on', b.dataset.t === navTab));
   $('#fab').classList.toggle('hidden', !FAB_TABS.includes(S.tab));
 }
@@ -543,6 +545,7 @@ const VIEWS = {
   more(){
     return `<div class="tiles">
       <button class="tile" onclick="A.go('bookings')"><span class="i">📅</span>Bookings &amp; Advance</button>
+      <button class="tile" onclick="A.go('book')"><span class="i">📒</span>Day Book (all entries)</button>
       <button class="tile" onclick="A.money()"><span class="i">💰</span>Bank / Balance &amp; Net Worth</button>
       <button class="tile" onclick="A.go('loans')"><span class="i">🏦</span>Loans &amp; EMI</button>
       <button class="tile" onclick="A.go('machines')"><span class="i">🚜</span>Machines</button>
@@ -555,7 +558,7 @@ const VIEWS = {
   machines(){
     return sub('🚜 Machines') + `<div class="card">${DB.machines.length ? DB.machines.map(m => { const s = machineStats(m.id), lease = DB.leases.find(l => l.machineId===m.id && l.status!=='Closed');
       return `<div class="item" onclick="A.machine('${m.id}')"><div class="av">${m.type==='Harvester'?'🌾':'🚜'}</div>
-        <div class="mid"><div class="t">${esc(m.name)} ${lease?'<span class="tag y">On Lease</span>':''}</div><div class="s">${esc([m.type,m.regNo].filter(Boolean).join(' · '))}<br>Income ${inr(s.i)} · Exp ${inr(s.e)}${(() => { const ds = dieselStats(m.id); return ds.lph ? `<br>⛽ <b>${ds.lph.toFixed(1)} L/hr</b> avg (${Math.round(ds.L)} L ÷ ${ds.hrs.toFixed(1)} hrs)` : ds.L ? `<br>⛽ ${Math.round(ds.L)} L diesel (no work hours yet)` : ''; })()}${(() => { const al = machineAlerts().filter(x => x.m.id === m.id); return (m.insExpiry || m.nextService) ? `<br><span class="${al.length ? 'exp' : ''}" style="${al.length ? 'font-weight:700' : ''}">${al.length ? '⚠ ' + al.map(x => x.text).join(' · ') : `🛡 Ins: ${m.insExpiry ? fd(m.insExpiry) : '—'} · 🔧 Service: ${m.nextService ? fd(m.nextService) : '—'}`}</span>` : ''; })()}${num(m.cost) ? `<br>💰 Cost ${inr(m.cost)}${num(m.value) ? ` · Value now ${inr(m.value)}` : ''}` : '<br><span class="pen">⚠ Purchase cost not entered — tap to add</span>'}</div>
+        <div class="mid"><div class="t">${esc(m.name)} ${lease?'<span class="tag y">On Lease</span>':''}</div><div class="s">${esc([m.type,m.regNo].filter(Boolean).join(' · '))}<br>Income ${inr(s.i)} · Exp ${inr(s.e)}${(() => { const ds = dieselStats(m.id); return ds.lph ? `<br>⛽ <b>${ds.lph.toFixed(1)} L/hr</b> avg (${Math.round(ds.L)} L ÷ ${ds.hrs.toFixed(1)} hrs${ds.est ? `, some litres est. @ ₹${ds.dp}/L` : ''})` : ds.L ? `<br>⛽ ${Math.round(ds.L)} L diesel (no work hours yet)` : ''; })()}${(() => { const al = machineAlerts().filter(x => x.m.id === m.id); return (m.insExpiry || m.nextService) ? `<br><span class="${al.length ? 'exp' : ''}" style="${al.length ? 'font-weight:700' : ''}">${al.length ? '⚠ ' + al.map(x => x.text).join(' · ') : `🛡 Ins: ${m.insExpiry ? fd(m.insExpiry) : '—'} · 🔧 Service: ${m.nextService ? fd(m.nextService) : '—'}`}</span>` : ''; })()}${num(m.cost) ? `<br>💰 Cost ${inr(m.cost)}${num(m.value) ? ` · Value now ${inr(m.value)}` : ''}` : '<br><span class="pen">⚠ Purchase cost not entered — tap to add</span>'}</div>
           ${num(m.cost) ? `<div style="background:#e5e7eb;border-radius:6px;height:8px;margin-top:5px;overflow:hidden"><div style="height:8px;background:#16a34a;width:${Math.max(0, Math.min(100, (s.i-s.e)/num(m.cost)*100))}%"></div></div><div style="font-size:11px;color:var(--mu)">${Math.round((s.i-s.e)/num(m.cost)*100)}% of cost recovered from profit</div>` : ''}</div>
         <div class="amt ${s.i-s.e>=0?'inc':'exp'}">${inr(s.i-s.e)}<small>profit (all)</small></div></div>`; }).join('') : '<div class="empty">No machines yet. Tap + to add Harvester / Tractor.</div>'}</div>`;
   },
@@ -619,6 +622,8 @@ const VIEWS = {
       <form id="pwForm" onsubmit="A.changePw(event)"><div class="row"><label>New password<input name="np" type="password" minlength="6" required></label></div><button class="btn s">Change Password</button></form></div>
     <div class="card"><b>Backup &amp; Restore</b><p style="font-size:13px;margin:6px 0;color:var(--mu)">Download a full backup file regularly. Restore merges records back (same IDs are overwritten).</p>
       <div class="btns"><button class="btn s" onclick="A.backup()">⬇ Download Backup</button><label class="btn s o" style="margin:0;text-align:center;color:var(--g)">⬆ Restore<input type="file" accept=".json" class="hidden" onchange="A.restore(this)"></label></div></div>
+    <div class="card"><b>⛽ Diesel price</b><p style="font-size:13px;margin:6px 0;color:var(--mu)">Used to estimate litres for diesel entries saved with only the amount (for L/hr mileage).</p>
+      <form onsubmit="A.setDiesel(event)" class="row" style="align-items:flex-end"><label>₹ per litre<input name="dp" inputmode="decimal" value="${dieselPrice()}"></label><button class="btn s" style="flex:0 0 auto;margin-bottom:8px">Save</button></form></div>
     <div class="card"><b>Records</b><p style="font-size:13px;margin:6px 0">${COLS.map(c => `${c}: ${DB[c].length}`).join(' · ')}</p></div>
     ${CLOUD ? `<div class="card"><b>🔒 Force Logout</b><p style="font-size:13px;margin:6px 0;color:var(--mu)">Phone lost or password shared? This logs out <b>every phone</b> (including this one). Change the password first if needed, then log in again.</p>
       <button class="btn r s" style="width:100%" onclick="A.forceLogout()">Force logout all devices</button></div>` : ''}
@@ -911,6 +916,7 @@ function partyForm(id){
 }
 function partyView(id){
   const p = party(id); if (!p) return;
+  delete pdfCache['p:' + id]; preparePartyPdf(id).catch(() => {});   // ready in background for instant Share
   const L = DB.txns.filter(t => t.partyId === id && (MAIN_TYPES.includes(t.type) || t.type === 'adjust')).sort(byDateAsc);
   const held = partyHeld(id), pb = DB.bookings.filter(b => b.partyId === id && b.status === 'Booked');
   let run = num(p.opening);
@@ -935,6 +941,8 @@ function partyView(id){
       <button type="button" class="btn s o" onclick="A.newBooking({partyId:'${id}'})">📅 Book</button></div>
     <div class="btns" style="margin-bottom:10px">
       ${ph ? `<a class="btn s" style="background:#25d366;text-decoration:none;text-align:center" href="https://wa.me/91${ph}?text=${msg}" target="_blank">WhatsApp Reminder</a><a class="btn s o" style="text-decoration:none;text-align:center" href="tel:${ph}">📞 Call</a>` : ''}
+      <button type="button" class="btn s" onclick="A.partyPdf('${id}')">⬇ Ledger PDF</button>
+      <button type="button" class="btn s b" onclick="A.sharePartyPdf('${id}')">📤 Share PDF</button>
       <button type="button" class="btn s o" onclick="A.editParty('${id}')">✏️ Edit</button>
       <button type="button" class="btn s o" onclick="A.close();A.bookParty('${id}')">📒 Entries</button></div>
     <table><tr><th>Date</th><th>Detail</th><th class="n">Billed (+)</th><th class="n">Paid (−)</th><th class="n">Balance</th></tr>${rows}
@@ -953,7 +961,7 @@ function machineForm(id){
     <label>Current value ₹ <small>(resale value today — used for Net Worth; blank = purchase cost)</small><input name="value" inputmode="decimal" value="${esc(m.value||'')}"></label>
     <div class="row"><label>🛡 Insurance expiry<input type="date" name="insExpiry" value="${esc(m.insExpiry||'')}"></label><label>🔧 Next service date<input type="date" name="nextService" value="${esc(m.nextService||'')}"></label></div>
     <div style="font-size:11px;color:var(--mu);margin:-4px 0 8px">A red alert shows on Home 7 days before these dates.</div>
-    ${id ? (() => { const ds = dieselStats(id); return ds.L ? `<div class="card" style="background:#fef3c7;font-size:13px">⛽ Diesel: <b>${Math.round(ds.L)} L</b> · Work: <b>${ds.hrs.toFixed(1)} hrs</b>${ds.lph ? ` · Avg <b>${ds.lph.toFixed(1)} L/hr</b>` : ''}</div>` : ''; })() : ''}
+    ${id ? (() => { const ds = dieselStats(id); return ds.L ? `<div class="card" style="background:#fef3c7;font-size:13px">⛽ Diesel: <b>${Math.round(ds.L)} L</b>${ds.est ? ` <small>(some est. @ ₹${ds.dp}/L)</small>` : ''} · Work: <b>${ds.hrs.toFixed(1)} hrs</b>${ds.lph ? ` · Avg <b>${ds.lph.toFixed(1)} L/hr</b>` : ''}</div>` : ''; })() : ''}
     <label>Note<textarea name="note" rows="2">${esc(m.note||'')}</textarea></label>
     ${id ? `<button type="button" class="btn s o" style="width:100%;margin-bottom:6px" onclick="A.close();A.bookMachine('${id}')">📒 View this machine's entries</button>` : ''}`,
   { onSave: d => {
@@ -1208,7 +1216,7 @@ const PDF_LIBS = ['https://cdn.jsdelivr.net/npm/jspdf@2.5.1/dist/jspdf.umd.min.j
 const loadScript = src => new Promise((res, rej) => { const s = document.createElement('script'); s.src = src; s.onload = res; s.onerror = () => rej(new Error('Could not load PDF tool – check internet')); document.head.appendChild(s); });
 async function pdfLib(){ if (!(window.jspdf && window.jspdf.jsPDF && window.jspdf.jsPDF.API.autoTable)) { for (const u of PDF_LIBS) await loadScript(u); } return window.jspdf.jsPDF; }
 const rs = n => (n < 0 ? '- ' : '') + 'Rs ' + Math.round(Math.abs(+n || 0)).toLocaleString('en-IN');
-const pt = v => String(v ?? '').replace(/₹\s?/g, 'Rs ').replace(/→/g, '->').replace(/[–—]/g, '-').replace(/[^\x20-\x7E\n]/g, '');
+const pt = v => String(v ?? '').replace(/×/g, 'x').replace(/₹\s?/g, 'Rs ').replace(/→/g, '->').replace(/[–—]/g, '-').replace(/[^\x20-\x7E\n]/g, '');
 async function ledgerPdfDoc(lid){
   const D = leaseLedgerData(lid); if (!D) return null;
   const {l, p, rows, S, bal, held, net, depIn, depOut, depKept} = D;
@@ -1261,6 +1269,64 @@ const pdfCache = {};
 async function preparePdf(lid){
   const R = await ledgerPdfDoc(lid); if (!R) return null;
   return pdfCache[lid] = {...R, file: new File([R.doc.output('blob')], R.name, {type: 'application/pdf'})};
+}
+/* ---------- Party ledger PDF (any client / lessee / shop) ---------- */
+async function partyPdfDoc(id){
+  const p = party(id); if (!p) return null;
+  const L = DB.txns.filter(t => t.partyId === id && (MAIN_TYPES.includes(t.type) || t.type === 'adjust')).sort(byDateAsc);
+  let run = num(p.opening), totB = 0, totP = 0; const rows = [];
+  if (num(p.opening)) rows.push(['', 'Opening balance', '', '', rs(run)]);
+  L.forEach(t => {
+    const a = num(t.amount), pd = num(t.paid); let dr = 0, cr = 0, det;
+    if (t.type === 'income') { dr = a; cr = pd; det = `${t.category || 'Work'}${mName(t.machineId) ? ' - ' + mName(t.machineId) : ''}${qtyText(t) ? '\n' + qtyText(t) : ''}${pd ? `\n(paid ${rs(pd)} same day)` : ''}`; }
+    else if (t.type === 'expense') { dr = pd; cr = a; det = `${t.category || 'Expense'} (your bill)${pd ? `\n(paid ${rs(pd)} same day)` : ''}`; }
+    else if (t.type === 'receipt') { cr = a; det = `Payment received (${t.mode || 'UPI'})`; }
+    else if (t.type === 'adjust') { cr = a; det = 'Advance / deposit adjusted'; }
+    else { dr = a; det = `Paid to you (${t.mode || 'UPI'})`; }
+    const note = (t.note || '').replace(/^\d+ min( · )?/, '').replace(/^Paid by lessee – deducted from rent( · )?/, '');
+    run += dr - cr; totB += dr; totP += cr;
+    rows.push([fd(t.date), pt(det) + (note ? '\n' + pt(note) : ''), dr ? rs(dr) : '', cr ? rs(cr) : '', rs(run)]);
+  });
+  const jsPDF = await pdfLib(), doc = new jsPDF({unit:'mm', format:'a4'}), W = doc.internal.pageSize.getWidth(), G = [20,83,45];
+  doc.setTextColor(...G); doc.setFont('helvetica','bold'); doc.setFontSize(22); doc.text(FIRM.name, 14, 18);
+  doc.setFontSize(9); doc.setFont('helvetica','normal'); doc.setTextColor(60); doc.text(`Proprietor: ${FIRM.ownerU}   |   Mob: ${FIRM.phone}`, 14, 23);
+  doc.setTextColor(0); doc.setFont('helvetica','bold'); doc.setFontSize(12); doc.text('PARTY LEDGER', W-14, 17, {align:'right'});
+  doc.setFont('helvetica','normal'); doc.setFontSize(9); doc.text('Date: ' + fd(today()), W-14, 23, {align:'right'});
+  doc.setDrawColor(...G); doc.setLineWidth(0.8); doc.line(14, 26, W-14, 26);
+  doc.setFontSize(10); doc.setFont('helvetica','bold'); doc.text('Party:', 14, 33); doc.setFont('helvetica','normal'); doc.text(pt(p.name), 28, 33);
+  if (p.phone) doc.text('Ph: ' + pt(p.phone), 14, 38); if (p.village) doc.text(pt(p.village), 14, 43);
+  doc.setFont('helvetica','bold'); doc.text('Statement:', W/2 + 5, 33); doc.setFont('helvetica','normal'); doc.text(`All entries till ${fd(today())}`, W/2 + 27, 33);
+  const client = isClient(id);
+  const finalLbl = run > 0.5 ? 'BALANCE PAYABLE BY YOU' : run < -0.5 ? (client ? 'ADVANCE WITH US (adjusted in next bill)' : `PAYABLE TO YOU BY ${FIRM.name}`) : 'ACCOUNT SETTLED';
+  const sumRows = [...(num(p.opening) ? [['Opening balance', rs(num(p.opening))]] : []), ['Total billed (+)', rs(totB)], ['Total paid / received (-)', '- ' + rs(totP)], [finalLbl, rs(Math.abs(run))]];
+  doc.setFont('helvetica','bold'); doc.setTextColor(...G); doc.setFontSize(12); doc.text('Summary', 14, 52); doc.setTextColor(0);
+  doc.autoTable({startY: 54, body: sumRows, theme: 'grid', styles: {fontSize: 10, cellPadding: 2.2}, columnStyles: {1: {halign: 'right', cellWidth: 55}},
+    didParseCell: d => { if (d.row.index === sumRows.length - 1) { d.cell.styles.fontStyle = 'bold'; d.cell.styles.fontSize = 12; d.cell.styles.fillColor = [254,243,199]; } }});
+  let y = doc.lastAutoTable.finalY + 8;
+  doc.setFont('helvetica','bold'); doc.setTextColor(...G); doc.setFontSize(12); doc.text('Details', 14, y); doc.setTextColor(0);
+  doc.autoTable({startY: y + 2, theme: 'grid', headStyles: {fillColor: G, fontSize: 9}, styles: {fontSize: 8.5, cellPadding: 1.8},
+    head: [['Date','Particulars','Billed (+)','Paid (-)','Balance']], body: rows.length ? rows : [['', 'No entries', '', '', '']],
+    foot: [['', 'TOTAL', rs(totB), rs(totP), rs(run)]], footStyles: {fillColor: [241,245,249], textColor: 0, fontStyle: 'bold', fontSize: 9},
+    columnStyles: {0: {cellWidth: 20}, 2: {halign: 'right', cellWidth: 26}, 3: {halign: 'right', cellWidth: 26}, 4: {halign: 'right', cellWidth: 28}}});
+  y = doc.lastAutoTable.finalY + 28; if (y > doc.internal.pageSize.getHeight() - 15) { doc.addPage(); y = 40; }
+  doc.setFontSize(10); doc.setLineWidth(0.3); doc.setDrawColor(0);
+  doc.line(14, y, 74, y); doc.text('Party signature', 44, y + 5, {align:'center'});
+  doc.line(W-84, y, W-14, y); doc.setFontSize(9); doc.text(`For ${FIRM.name} (${FIRM.owner})`, W-49, y + 5, {align:'center'});
+  const pages = doc.getNumberOfPages();
+  for (let i = 1; i <= pages; i++) { doc.setPage(i); doc.setFontSize(8); doc.setTextColor(120); doc.text(`Page ${i} of ${pages}`, W-14, doc.internal.pageSize.getHeight() - 8, {align:'right'}); }
+  return {doc, name: `NAYAK-Ledger-${pt(p.name).trim().replace(/\s+/g,'-')}-${today()}.pdf`, title: `Ledger - ${pt(p.name)}`};
+}
+async function preparePartyPdf(id){ const R = await partyPdfDoc(id); if (!R) return null; return pdfCache['p:' + id] = {...R, file: new File([R.doc.output('blob')], R.name, {type: 'application/pdf'})}; }
+async function partyPdf(id){
+  try { const c = pdfCache['p:' + id] || (toast('Making PDF…', 1500), await preparePartyPdf(id)); c.doc.save(c.name); toast('PDF saved to Downloads ✓', 2500); }
+  catch (e) { alert(e.message); }
+}
+function sharePartyPdf(id){
+  const c = pdfCache['p:' + id];
+  if (!c) { toast('Preparing PDF… tap Share again in 2 seconds', 2500); preparePartyPdf(id).then(() => toast('PDF ready ✓ — tap Share again', 2500)).catch(e => alert(e.message)); return; }
+  const saveInstead = msg => { c.doc.save(c.name); toast(msg, 4500); };
+  if (!(navigator.canShare && navigator.canShare({files: [c.file]}))) return saveInstead('Share not supported — PDF saved to Downloads. Attach it in WhatsApp 📎');
+  navigator.share({files: [c.file], title: c.title}).catch(e => { if (e.name !== 'AbortError') saveInstead('Share blocked — PDF saved to Downloads. Attach it in WhatsApp 📎'); });
 }
 async function ledgerPdf(lid){
   try { const c = pdfCache[lid] || (toast('Making PDF…', 1500), await preparePdf(lid)); c.doc.save(c.name); toast('PDF saved to Downloads ✓', 2500); }
@@ -1428,7 +1494,7 @@ addEventListener('popstate', () => {
   try {
     if (document.body.classList.contains('printing')) document.body.classList.remove('printing');
     else if ($('#sheetBg')) closeSheet();
-    else if (S.tab !== 'home') { S.tab = ['machines','reports','settings','bookings','loans'].includes(S.tab) ? 'more' : 'home'; scrollTo(0,0); render(); }
+    else if (S.tab !== 'home') { S.tab = ['machines','reports','settings','bookings','loans','book'].includes(S.tab) ? 'more' : 'home'; scrollTo(0,0); render(); }
     else if (Date.now() - (exitArm || 0) < 2500) { inPop = false; history.back(); return; }
     else { exitArm = Date.now(); toast('Press back again to exit'); inPop = false; pushNav(); }
   } finally { inPop = false; }
@@ -1478,6 +1544,9 @@ window.A = {
   leaseFuel: id => leaseFuelForm(id),
   leaseStmt: id => leaseStatement(id),
   ledgerPdf: id => ledgerPdf(id),
+  partyPdf: id => partyPdf(id),
+  sharePartyPdf: id => sharePartyPdf(id),
+  setDiesel(e){ e.preventDefault(); const v = num(e.target.dp.value); if (v <= 0) return toast('Enter price'); store.set('meta', 'settings', {dieselPrice: v}); toast('Saved ✓'); },
   sharePdf: id => sharePdf(id),
   leaseBill(id){ const l = DB.leases.find(x => x.id === id); if (TIME_BASIS.includes(l.basis)) return leaseTimeBill(id); txForm(null, {type:'income', category:'Lease Rent', machineId:l.machineId, partyId:l.partyId, leaseId:id, amount:l.rent||'', paid:'0', note:`Lease rent (${l.basis})`}); },
   loan: id => loanView(id),
