@@ -466,6 +466,7 @@ const VIEWS = {
       <button class="qbtn" style="background:#fee2e2" onclick="A.bankOut()"><span>⬆️</span>Money OUT<small>from bank</small></button>
       <button class="qbtn" style="background:#dcfce7" onclick="A.work()"><span>🌾</span>Work Bill<small>machine income</small></button>
       <button class="qbtn" style="background:#fef3c7" onclick="A.exp()"><span>⛽</span>Machine Expense<small>diesel, repair…</small></button></div>
+    <a class="btn o" href="meter-calculator.html" style="display:block;text-align:center;text-decoration:none;margin-top:8px">⏱ Meter Calculator</a>
     <h2>Recent entries</h2>
     <div class="card">${DB.txns.length ? [...DB.txns].sort(byDateDesc).slice(0,8).map(txRow).join('') : '<div class="empty">No entries yet</div>'}</div>`;
   },
@@ -594,6 +595,7 @@ const VIEWS = {
   more(){
     return `<div class="tiles">
       <button class="tile" onclick="A.go('bookings')"><span class="i">📅</span>Bookings &amp; Advance</button>
+      <a class="tile" href="meter-calculator.html" style="text-decoration:none"><span class="i">⏱</span>Meter Calculator</a>
       <button class="tile" onclick="A.go('book')"><span class="i">📒</span>Day Book (all entries)</button>
       <button class="tile" onclick="A.go('ie')"><span class="i">📊</span>Income / Expense filter</button>
       <button class="tile" onclick="A.go('loans')"><span class="i">🏦</span>Loans &amp; EMI</button>
@@ -833,6 +835,7 @@ function workForm(id, preset = {}){
     <label>Date<input type="date" name="date" value="${esc(t.date)}"></label>
     <div class="row"><label>⏱ Hours<input name="th" inputmode="numeric" value="${mins0 ? Math.floor(mins0/60) : ''}"></label><label>Minutes<input name="tm" inputmode="numeric" value="${mins0 ? Math.round(mins0%60) : ''}"></label><label>Rate ₹/hr<input name="rate" inputmode="decimal" value="${esc(t.rate||'')}"></label></div>
     <details style="margin:-2px 0 8px"><summary style="font-size:12.5px;color:var(--g);font-weight:600;cursor:pointer">⏱ Start / End time or meter · or Acre / Trip</summary>
+      <a href="meter-calculator.html" style="display:inline-block;font-size:12px;margin-top:6px;color:var(--g)">Open full Meter Calculator ›</a>
       <div class="row" style="margin-top:6px"><label>Start time<input type="time" name="st"></label><label>End time<input type="time" name="et"></label></div>
       <div class="row"><label>Start meter<input name="sm" inputmode="decimal"></label><label>End meter<input name="em" inputmode="decimal"></label></div>
       <label>Or Qty (acre / trip) — then Rate is per acre / trip<input name="qty" inputmode="decimal" value="${mins0 ? '' : esc(t.qty||'')}"></label></details>
