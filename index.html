@@ -462,7 +462,6 @@ const VIEWS = {
       ${stat('Advance from Clients', inr(DS.adv), 'blu', 'A.hd(\'advance\')')}
       ${stat('Open Bookings', upcoming.length, 'blu', 'A.hd(\'bookings\')')}
       ${stat('Active Leases', activeLease, 'blu', 'A.hd(\'leases\')')}
-      ${stat('📊 Net Worth', inr(netWorth().net), 'inc', 'A.money()')}
     </div>` : ''}
     </div>
     <div class="btns" style="margin:12px 0">
@@ -546,6 +545,12 @@ const VIEWS = {
       <tr><td>+ Money in</td><td class="n inc">${inr(inT)}</td></tr>
       <tr><td>− Money out</td><td class="n exp">− ${inr(outT)}</td></tr>
       <tr><th>= Closing balance</th><th class="n ${closing >= 0 ? 'blu' : 'exp'}" style="font-size:18px">${inr(closing)}</th></tr></table></div>
+    ${(() => { const U = profitUse(S.period), row = (l, v, c='') => `<tr><td>${l}</td><td class="n ${c}">${v}</td></tr>`;
+      return `<details class="card"><summary style="font-weight:700;cursor:pointer">🧭 Where did the profit go? · ${esc(periodLabel(S.period))}</summary><table style="margin-top:6px">
+      ${row('Net profit earned', inr(U.profit), U.profit >= 0 ? 'inc' : 'exp')}${U.cap ? row('+ Own money added', inr(U.cap), 'inc') : ''}${U.loanIn ? row('+ Loans taken', inr(U.loanIn), 'inc') : ''}
+      ${row('− Loan principal repaid', '− ' + inr(U.prin), 'exp')}${U.assetB ? row('− Machines / assets bought', '− ' + inr(U.assetB), 'exp') : ''}${row('− Personal / family use', '− ' + inr(U.draw), 'exp')}
+      ${row('± Dues not collected / advances / other', (U.other >= 0 ? '+ ' : '− ') + inr(Math.abs(U.other)))}
+      <tr><th>= Change in Bank / Balance</th><th class="n ${U.change >= 0 ? 'inc' : 'exp'}">${inr(U.change)}</th></tr></table></details>`; })()}
     <details class="card"><summary style="font-weight:700;cursor:pointer">📊 Breakup by type</summary>
       <table style="margin-top:6px"><tr><th>Type</th><th class="n">In</th><th class="n">Out</th></tr>
       ${Object.entries(G).sort((x,y) => (y[1].in+y[1].out) - (x[1].in+x[1].out)).map(([g, v]) => `<tr onclick="A.bk2({g:'${esc(g).replace(/'/g,'&#39;')}'})" style="cursor:pointer"><td>${esc(g)} ›</td><td class="n inc">${v.in ? inr(v.in) : ''}</td><td class="n exp">${v.out ? inr(v.out) : ''}</td></tr>`).join('') || '<tr><td colspan="3" class="empty">No entries</td></tr>'}</table></details>
@@ -591,7 +596,6 @@ const VIEWS = {
       <button class="tile" onclick="A.go('bookings')"><span class="i">📅</span>Bookings &amp; Advance</button>
       <button class="tile" onclick="A.go('bank')"><span class="i">🏦</span>Bank Ledger</button>
       <button class="tile" onclick="A.go('book')"><span class="i">📒</span>Day Book (all entries)</button>
-      <button class="tile" onclick="A.money()"><span class="i">💰</span>Bank / Balance &amp; Net Worth</button>
       <button class="tile" onclick="A.go('loans')"><span class="i">🏦</span>Loans &amp; EMI</button>
       <button class="tile" onclick="A.go('machines')"><span class="i">🚜</span>Machines</button>
       <button class="tile" onclick="A.go('reports')"><span class="i">📊</span>Reports</button>
@@ -1582,7 +1586,7 @@ window.A = {
   editTx(id){ const t = DB.txns.find(x => x.id === id); if (t) OWN.includes(t.type) ? ownForm(id) : HOLD.includes(t.type) ? holdTxForm(id) : txForm(id); },
   own: ty => ownForm(null, {type: ty}),
   opening: () => openingForm(),
-  money: () => moneySheet(),
+  money: () => A.go('bank'),   // one page: Bank Ledger (net worth summary removed)
   acct: a => acctStatement(a),
   bk2(o){ Object.assign(S.bk2, o); render(); },
   ownMore(){ const big = (fn, bg, ic, t, sub) => `<button type="button" onclick="${fn}" style="display:flex;gap:12px;align-items:center;width:100%;text-align:left;border:0;border-radius:14px;padding:14px;margin-bottom:8px;background:${bg};font:inherit;color:var(--tx)"><span style="font-size:28px">${ic}</span><span><b>${t}</b><br><span style="font-size:12px;color:var(--mu)">${sub}</span></span></button>`;
